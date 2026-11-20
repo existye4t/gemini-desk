@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gtk::prelude::{GtkWindowExt, SettingsExt, WidgetExt};
+use gtk::prelude::{GtkSettingsExt, GtkWindowExt, WidgetExt};
 use tao::event_loop::EventLoopProxy;
 use tao::platform::unix::WindowExtUnix;
 use tao::window::Window;

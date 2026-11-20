@@ -5,7 +5,6 @@ edition = "2024"
 description = "Lightweight native Rust desktop client for Google Gemini"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/existye4t/gemini-desk"
-homepage = "https://github.com/existye4t/gemini-desk"
 readme = "README.md"
 keywords = ["gemini", "desktop", "webview", "rust", "cross-platform"]
 categories = ["gui"]

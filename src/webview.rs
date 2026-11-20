@@ -7,14 +7,13 @@ use tao::event_loop::EventLoopProxy;
 use tao::window::Window;
 use tracing::{info, warn};
 use wry::{
-    NewWindowResponse, PageLoadEvent, PermissionResponse, Theme as WryTheme, WebContext, WebView,
-    WebViewBuilder,
+    NewWindowResponse, PageLoadEvent, PermissionResponse, WebContext, WebView, WebViewBuilder,
 };
 
 #[cfg(target_os = "windows")]
 use tao::platform::windows::WindowExtWindows;
 #[cfg(target_os = "windows")]
-use wry::{MemoryUsageLevel, WebViewBuilderExtWindows, WebViewExtWindows};
+use wry::{MemoryUsageLevel, Theme as WryTheme, WebViewBuilderExtWindows, WebViewExtWindows};
 
 #[cfg(target_os = "linux")]
 use tao::platform::unix::WindowExtUnix;
@@ -347,7 +346,6 @@ impl WebViewEngine {
     /// Returns an official PID -> Role map from Microsoft WebView2's `ICoreWebView2Environment8::GetProcessInfos()`.
     /// Used exclusively on demand while Settings -> Performance is open.
     pub fn process_role_map(&self) -> HashMap<u32, &'static str> {
-        let mut map = HashMap::new();
         #[cfg(target_os = "windows")]
         {
             use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -358,6 +356,7 @@ impl WebViewEngine {
             };
             use windows::core::Interface;
 
+            let mut map = HashMap::new();
             let env = self.webview.environment();
             if let Ok(env8) = env.cast::<ICoreWebView2Environment8>()
                 && let Ok(coll) = unsafe { env8.GetProcessInfos() }
@@ -391,8 +390,12 @@ impl WebViewEngine {
                     }
                 }
             }
+            map
         }
-        map
+        #[cfg(not(target_os = "windows"))]
+        {
+            HashMap::new()
+        }
     }
 
     /// Switches WebView2 between Normal and Low memory usage target levels.

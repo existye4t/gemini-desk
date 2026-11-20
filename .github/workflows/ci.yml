@@ -37,9 +37,12 @@ jobs:
         run: cargo test --locked
       - name: Release build
         run: cargo build --release --locked
-      - name: Package Portable ZIP & NSIS Installer
+      - name: Install NSIS & Package Portable ZIP & Setup Installer
         shell: pwsh
         run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+          }
           $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           .\packaging\windows\build-installer.ps1 -Version $ver -RequireNsis
           $setup = "dist\GeminiDesk-$ver-Windows-x64-Setup.exe"
@@ -119,7 +122,7 @@ jobs:
 
   macos:
     name: macOS (Apple Silicon + Intel)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
