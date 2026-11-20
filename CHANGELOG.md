@@ -21,19 +21,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Sema
   - `.app` & `.dmg` packaging pipeline with `Info.plist`, Hardened Runtime `entitlements.plist`, and conditional Developer ID signing + Apple `notarytool` notarization.
 - **Windows Native Installer & Metadata:**
   - Embedded monochrome multi-resolution `.ico` and Windows `VERSIONINFO` resource via `build.rs` (`winresource`).
-  - Per-user Unicode NSIS installer (`%LOCALAPPDATA%\Programs\GeminiDesk`, zero UAC admin prompt), WebView2 Runtime detection, Start Menu & optional Desktop shortcuts, clean upgrades preserving Google sign-in & config, and opt-in user-data cleanup on uninstall.
-  - Portable Windows ZIP packaging script.
+  - Per-user Unicode NSIS installer (`GeminiDesk-0.4.0-Windows-x64-Setup.exe`, `%LOCALAPPDATA%\Programs\GeminiDesk`, zero UAC admin prompt), WebView2 Runtime detection, Start Menu & optional Desktop shortcuts, `/S /AUTORESTART` post-update relaunch, clean upgrades preserving Google sign-in & config, and opt-in user-data cleanup on uninstall.
+  - Portable Windows ZIP packaging script (`GeminiDesk-0.4.0-Windows-x64-Portable.zip`).
 - **Cryptographically Authenticated Updater (`src/updater/mod.rs`):**
-  - Ed25519 signature verification over `latest.json` (`latest.json.sig`), strict SemVer anti-downgrade checks, HTTPS-only downloads, streaming `.part` SHA-256 verification, pre-install TOCTOU re-verification, stale `.part` recovery, and integrated **Settings → About** update controls.
+  - Ed25519 signature verification over `latest.json` (`latest.json.sig`) with embedded production public key (`ce042ef3aa7286c10ae6fdd6a886cfee2bc7ec09cd24d1862ca878adc5b1b637`), strict SemVer anti-downgrade checks, trusted GitHub Releases HTTPS host allowlist, OS native TLS (`TlsProvider::NativeTls`), streaming `.part` SHA-256 verification, pre-install TOCTOU re-verification, stale `.part` recovery, and integrated **Settings → About** update controls.
 - **Cross-Platform GitHub Actions CI/CD:**
-  - `.github/workflows/ci.yml` (Windows x64, Ubuntu 24.04 Linux x64, macOS 14 Apple Silicon + Intel compile check).
-  - `.github/workflows/release.yml` (tag/dry-run builds, packaging, optional signing, `SHA256SUMS.txt`, signed `latest.json`, Draft GitHub Release).
-- **Project & Community Documentation:** `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, issue templates, PR template, and release notes template.
+  - `.github/workflows/ci.yml` (Windows x64, Ubuntu 24.04 Linux x64, macOS 15 Apple Silicon + Intel compile & packaging verification) with third-party Actions pinned to immutable commit SHAs and least-privilege `contents: read` permissions.
+  - `.github/workflows/release.yml` (tag/dispatch builds, packaging, `SHA256SUMS.txt`, Ed25519-signed `latest.json` + `--verify` self-check, Draft GitHub Release).
+  - `.github/dependabot.yml` for weekly Cargo and GitHub Actions dependency updates.
+- **Project & Community Documentation:** `LICENSE-MIT`, `LICENSE-APACHE`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, issue templates, PR template, and release notes template.
 
 ### Changed
+- Unified product identity across all windows, menus, tray tooltips, shortcuts, and installer metadata to **`GeminiDesk`** (with non-affiliation disclosures kept in `README.md`, `Settings → About`, and legal documentation).
 - Refined application icon (`src/icon.rs` + `assets/icons/*`) into a cohesive monochrome obsidian squircle + silver-white prism matching the `v0.3.1` design system.
 - Isolated local utility WebViews (`SettingsWindow`, `ActionWindow`) into incognito ephemeral contexts on Linux/macOS to eliminate WebKitGTK custom-protocol collisions.
-- Added safe cross-platform download handler routing Gemini exports into the OS `Downloads` directory with sanitized filenames.
+- Hardened cross-platform download filename sanitization (`sanitize_download_filename`) against path traversal, control characters, and Windows reserved device names (`CON`, `NUL`, `COM1`, `LPT1`, etc.).
 
 ---
 
