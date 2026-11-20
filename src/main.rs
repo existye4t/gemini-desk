@@ -1,3 +1,5 @@
+mod navigation;
+
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
@@ -8,8 +10,12 @@ use tao::{
     window::WindowBuilder,
 };
 use tracing::{info, warn};
-use url::Url;
-use wry::{NewWindowResponse, PermissionResponse, WebContext, WebViewBuilder};
+use wry::{NewWindowResponse, PageLoadEvent, PermissionResponse, WebContext, WebViewBuilder};
+
+use crate::navigation::{
+    NavigationDecision, NewWindowDecision, classify_navigation, classify_new_window,
+    redact_url_for_log,
+};
 
 const GEMINI_URL: &str = "https://gemini.google.com/app";
 
@@ -20,26 +26,6 @@ fn webview_data_dir() -> PathBuf {
     let dir = base.join("webview");
     let _ = std::fs::create_dir_all(&dir);
     dir
-}
-
-fn is_allowed_in_app_host(host: &str) -> bool {
-    let h = host.to_ascii_lowercase();
-    h == "gemini.google.com"
-        || h == "accounts.google.com"
-        || h == "accounts.youtube.com"
-        || h == "myaccount.google.com"
-        || h == "gds.google.com"
-        || h == "consent.google.com"
-        || h == "ogs.google.com"
-        || h == "docs.google.com"
-        || h == "drive.google.com"
-        || h == "workspace.google.com"
-        || h == "one.google.com"
-        || h == "aistudio.google.com"
-        || h == "bard.google.com"
-        || h.ends_with(".google.com")
-        || h.ends_with(".gstatic.com")
-        || h.ends_with(".googleusercontent.com")
 }
 
 fn main() -> wry::Result<()> {
@@ -55,7 +41,7 @@ fn main() -> wry::Result<()> {
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_title("GeminiDesk — Unofficial Gemini Client (Phase B Proof)")
+        .with_title("GeminiDesk — Unofficial Gemini Client (Phase B Auth Verification)")
         .with_inner_size(LogicalSize::new(1200.0, 820.0))
         .with_min_inner_size(LogicalSize::new(420.0, 520.0))
         .build(&event_loop)
@@ -71,49 +57,53 @@ fn main() -> wry::Result<()> {
             info!(?kind, "Permission requested by web content");
             PermissionResponse::Default
         })
+        .with_on_page_load_handler(|event, uri| {
+            let safe_url = redact_url_for_log(&uri);
+            let state = match event {
+                PageLoadEvent::Started => "started",
+                PageLoadEvent::Finished => "finished",
+            };
+            info!(state, url = %safe_url, "Page load state changed");
+        })
         .with_navigation_handler(|uri| {
-            match Url::parse(&uri) {
-                Ok(parsed) => {
-                    let scheme = parsed.scheme();
-                    if scheme == "about" || scheme == "blob" || scheme == "data" {
-                        return true;
-                    }
-                    if scheme != "https" {
-                        warn!(%uri, "Blocked non-HTTPS navigation");
-                        return false;
-                    }
-                    if let Some(host) = parsed.host_str() {
-                        if is_allowed_in_app_host(host) {
-                            info!(%host, "Allowing in-app navigation");
-                            return true;
-                        }
-                        info!(%host, "Opening external URL in system browser");
-                        let _ = open::that(&uri);
-                        return false;
+            let safe_url = redact_url_for_log(&uri);
+            match classify_navigation(&uri) {
+                NavigationDecision::AllowInApp => {
+                    info!(url = %safe_url, "Allowing in-app navigation");
+                    true
+                }
+                NavigationDecision::OpenExternal => {
+                    info!(url = %safe_url, "Opening external URL in system browser");
+                    if let Err(err) = open::that(&uri) {
+                        warn!(url = %safe_url, ?err, "Failed to open external URL");
                     }
                     false
                 }
-                Err(err) => {
-                    warn!(%uri, ?err, "Invalid navigation URL");
+                NavigationDecision::Block => {
+                    warn!(url = %safe_url, "Blocked disallowed navigation");
                     false
                 }
             }
         })
         .with_new_window_req_handler(|uri, _features| {
-            info!(%uri, "New window requested");
-            if let Ok(parsed) = Url::parse(&uri)
-                && parsed.scheme() == "https"
-                && let Some(host) = parsed.host_str()
-            {
-                if host == "accounts.google.com"
-                    || host == "docs.google.com"
-                    || host == "drive.google.com"
-                {
-                    return NewWindowResponse::Allow;
+            let safe_url = redact_url_for_log(&uri);
+            match classify_new_window(&uri) {
+                NewWindowDecision::AllowInAppPopup => {
+                    info!(url = %safe_url, "Allowing in-app popup");
+                    NewWindowResponse::Allow
                 }
-                let _ = open::that(&uri);
+                NewWindowDecision::OpenExternal => {
+                    info!(url = %safe_url, "Opening external popup URL in system browser");
+                    if let Err(err) = open::that(&uri) {
+                        warn!(url = %safe_url, ?err, "Failed to open external popup URL");
+                    }
+                    NewWindowResponse::Deny
+                }
+                NewWindowDecision::Deny => {
+                    warn!(url = %safe_url, "Denied disallowed popup");
+                    NewWindowResponse::Deny
+                }
             }
-            NewWindowResponse::Deny
         })
         .with_document_title_changed_handler(|title| {
             info!(%title, "Document title changed");
