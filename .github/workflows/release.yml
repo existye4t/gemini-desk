@@ -1,0 +1,160 @@
+name: Release — Cross-Platform Packages & Signed Update Metadata
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading v (e.g. 0.4.0)'
+        required: true
+        default: '0.4.0'
+      dry_run:
+        description: 'Dry run (build & verify artifacts only; do not create a GitHub release)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Optional compile-time Ed25519 public key (64 hex chars) stored in repo variables/secrets.
+  # When unset, builds cleanly with automatic updates fail-closed.
+  GEMINIDESK_UPDATER_PUBKEY: ${{ vars.GEMINIDESK_UPDATER_PUBKEY }}
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      dry_run: ${{ steps.ver.outputs.dry_run }}
+    steps:
+      - id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VER="${{ inputs.version }}"
+            DRY="${{ inputs.dry_run }}"
+          else
+            VER="${GITHUB_REF_NAME#v}"
+            DRY="false"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          echo "dry_run=${DRY}" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: resolve-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Build Windows NSIS installer & Portable ZIP
+        shell: pwsh
+        run: .\packaging\windows\build-installer.ps1 -Version "${{ needs.resolve-version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*
+
+  build-linux:
+    needs: resolve-version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev pkg-config libxdo-dev rpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Build .deb, .rpm, and AppImage/tarball
+        run: |
+          mkdir -p dist
+          cargo install cargo-deb cargo-generate-rpm --locked
+          cargo deb --no-build --output dist/
+          cargo generate-rpm -o dist/
+          chmod +x packaging/linux/build-appimage.sh
+          ./packaging/linux/build-appimage.sh "${{ needs.resolve-version.outputs.version }}" x86_64
+          cp packaging/linux/PKGBUILD dist/PKGBUILD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*
+
+  build-macos:
+    needs: resolve-version
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Build macOS .app & .dmg (signed & notarized when Apple secrets are configured)
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          chmod +x packaging/macos/build-bundle.sh
+          ./packaging/macos/build-bundle.sh \
+            "${{ needs.resolve-version.outputs.version }}" \
+            "${{ matrix.arch }}" \
+            "target/${{ matrix.target }}/release/gemini-desk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+
+  prepare-draft-release:
+    needs: [resolve-version, build-windows, build-linux, build-macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: collected
+          merge-multiple: true
+      - name: Generate SHA256SUMS.txt and Ed25519-signed latest.json
+        env:
+          UPDATER_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_SIGNING_PRIVATE_KEY }}
+        run: |
+          python3 -m pip install --quiet cryptography
+          python3 scripts/release_manifest.py \
+            --version "${{ needs.resolve-version.outputs.version }}" \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/${{ needs.resolve-version.outputs.tag }}" \
+            --dist-dir collected \
+            --notes-file .github/RELEASE_NOTES_TEMPLATE.md
+          ls -lh collected/
+      - name: Upload consolidated verified release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: geminidesk-${{ needs.resolve-version.outputs.tag }}-draft-bundle
+          path: collected/*
+      - name: Create DRAFT GitHub Release (requires explicit manual publication)
+        if: needs.resolve-version.outputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          name: GeminiDesk ${{ needs.resolve-version.outputs.tag }} (Draft)
+          draft: true
+          prerelease: true
+          body_path: .github/RELEASE_NOTES_TEMPLATE.md
+          files: collected/*

@@ -1,0 +1,26 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=GeminiDesk
+GenericName=Google Gemini Desktop Client
+Comment=Unofficial lightweight Rust desktop client for Google Gemini
+Exec=gemini-desk %U
+Icon=io.geminidesk.GeminiDesk
+Terminal=false
+Categories=Network;Utility;
+Keywords=Gemini;AI;Google;Chat;Assistant;
+StartupNotify=true
+StartupWMClass=io.geminidesk.GeminiDesk
+Actions=QuickChat;Companion;Settings;
+
+[Desktop Action QuickChat]
+Name=Open Quick Chat
+Exec=gemini-desk --quick-chat
+
+[Desktop Action Companion]
+Name=Toggle Floating Companion
+Exec=gemini-desk --companion
+
+[Desktop Action Settings]
+Name=Settings
+Exec=gemini-desk --settings

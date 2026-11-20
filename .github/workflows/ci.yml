@@ -1,0 +1,128 @@
+name: CI — Cross-Platform Build, Lint, Test & Packaging
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  windows:
+    name: Windows (x86_64-pc-windows-msvc)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (-D warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Unit & updater security tests
+        run: cargo test --locked
+      - name: Release build
+        run: cargo build --release --locked
+      - name: Package Portable ZIP & NSIS Installer
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          .\packaging\windows\build-installer.ps1 -Version $ver
+          Get-ChildItem dist | Format-Table Name, Length
+      - name: Upload Windows CI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: geminidesk-windows-x86_64
+          path: dist/*
+          retention-days: 7
+
+  linux:
+    name: Linux (x86_64-unknown-linux-gnu · WebKitGTK)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK3, WebKitGTK 4.1, and packaging validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            pkg-config \
+            libxdo-dev \
+            desktop-file-utils \
+            appstream
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (-D warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Unit & updater security tests
+        run: cargo test --locked
+      - name: Release build
+        run: cargo build --release --locked
+      - name: Validate Linux desktop & AppStream metadata
+        run: |
+          desktop-file-validate packaging/linux/io.geminidesk.GeminiDesk.desktop
+          appstreamcli validate --no-net packaging/linux/io.geminidesk.GeminiDesk.metainfo.xml
+      - name: Package .deb and verify integrity
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --no-build --output dist/
+          dpkg-deb --info dist/*.deb
+          ./packaging/linux/build-appimage.sh "$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)" x86_64
+      - name: Upload Linux CI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: geminidesk-linux-x86_64
+          path: dist/*
+          retention-days: 7
+
+  macos:
+    name: macOS (Apple Silicon aarch64 + Intel x86_64 compile)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (-D warnings, Apple Silicon)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Unit & updater security tests (Apple Silicon)
+        run: cargo test --locked
+      - name: Release build (Apple Silicon aarch64)
+        run: cargo build --release --locked --target aarch64-apple-darwin
+      - name: Cross-compile release check (Intel x86_64)
+        run: cargo build --release --locked --target x86_64-apple-darwin
+      - name: Package unsigned CI .app & .dmg (Apple Silicon)
+        run: |
+          VER="$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)"
+          chmod +x packaging/macos/build-bundle.sh
+          ./packaging/macos/build-bundle.sh "${VER}" aarch64 target/aarch64-apple-darwin/release/gemini-desk
+          ls -lh dist/
+      - name: Upload macOS CI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: geminidesk-macos-aarch64-unsigned
+          path: dist/*.dmg
+          retention-days: 7
