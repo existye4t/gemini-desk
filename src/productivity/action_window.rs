@@ -13,8 +13,7 @@ use crate::config::ClipboardActionTemplate;
 use crate::icon;
 use crate::platform;
 use crate::productivity::{CaptureSource, ScreenshotData, encode_base64};
-
-const ACTION_PANEL_HTML: &str = include_str!("../ui/action_panel.html");
+use crate::ui_assets::{UI_PROTOCOL, handle_protocol_request, is_local_ui_url, page_url};
 
 /// Typed IPC messages received strictly from the isolated local Action Panel WebView.
 #[derive(Debug, Deserialize)]
@@ -58,6 +57,7 @@ struct ActionInitPayload {
     templates: Vec<ClipboardActionTemplate>,
     image_width: u32,
     image_height: u32,
+    image_bytes: usize,
     image_base64: String,
 }
 
@@ -69,8 +69,8 @@ fn utility_bg(is_dark: bool) -> (u8, u8, u8, u8) {
     }
 }
 
-/// Lazy-created quiet Apple-style sheet for reviewing selections, clipboard actions,
-/// or screenshot captures before explicitly handing them to Gemini.
+/// Lazy-created quiet Apple/Raycast-inspired sheet for reviewing selections,
+/// clipboard actions, or screenshot captures before explicitly handing them to Gemini.
 /// Destroyed immediately upon confirm or cancel (zero idle RAM).
 pub struct ActionWindow {
     window: Window,
@@ -88,17 +88,17 @@ impl ActionWindow {
         proxy: EventLoopProxy<AppEvent>,
     ) -> Result<Self, String> {
         let (title, width, height) = match &content {
-            ActionPanelContent::Selection { .. } => ("Ask Gemini with Selection", 600.0, 440.0),
+            ActionPanelContent::Selection { .. } => ("Ask Gemini with Selection", 620.0, 440.0),
             ActionPanelContent::Clipboard { .. } => {
-                ("Clipboard Actions — GeminiDesk", 620.0, 460.0)
+                ("Clipboard Actions — GeminiDesk", 680.0, 460.0)
             }
-            ActionPanelContent::Screenshot(_) => ("Screenshot Preview — GeminiDesk", 640.0, 520.0),
+            ActionPanelContent::Screenshot(_) => ("Screenshot to Gemini", 680.0, 540.0),
         };
 
         let mut wb = WindowBuilder::new()
             .with_title(title)
             .with_inner_size(LogicalSize::new(width, height))
-            .with_min_inner_size(LogicalSize::new(480.0, 360.0))
+            .with_min_inner_size(LogicalSize::new(500.0, 380.0))
             .with_always_on_top(true)
             .with_visible(false);
 
@@ -115,8 +115,11 @@ impl ActionWindow {
         let ipc_proxy = proxy.clone();
         let builder = WebViewBuilder::new_with_web_context(web_context)
             .with_background_color(utility_bg(is_dark))
-            .with_html(ACTION_PANEL_HTML)
-            .with_navigation_handler(|uri| uri == "about:blank" || uri.starts_with("data:"))
+            .with_custom_protocol(UI_PROTOCOL.to_string(), |_id, req| {
+                handle_protocol_request(req)
+            })
+            .with_url(page_url("action_panel.html"))
+            .with_navigation_handler(|uri| is_local_ui_url(&uri))
             .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
             .with_ipc_handler(move |req| {
                 match serde_json::from_str::<ActionIpcMessage>(req.body()) {
@@ -176,7 +179,7 @@ impl ActionWindow {
                     CaptureSource::UiAutomation => (
                         "UI Automation".into(),
                         if *truncated {
-                            Some("Selection was truncated to your configured maximum length.".into())
+                            Some("Selection truncated to configured maximum length.".into())
                         } else {
                             None
                         },
@@ -189,12 +192,12 @@ impl ActionWindow {
                     ),
                     CaptureSource::ProtectedField => (
                         "Protected Field".into(),
-                        Some("Capture blocked: the focused input is a protected password field.".into()),
+                        Some("Selection capture blocked: focused control is a protected password field.".into()),
                         true,
                     ),
                     _ => (
                         "Manual Paste".into(),
-                        Some("No accessible text selection was detected. Paste or type your text below.".into()),
+                        Some("No accessible selection detected. Paste or type text below.".into()),
                         false,
                     ),
                 };
@@ -208,6 +211,7 @@ impl ActionWindow {
                     templates: templates.clone(),
                     image_width: 0,
                     image_height: 0,
+                    image_bytes: 0,
                     image_base64: String::new(),
                 }
             }
@@ -221,7 +225,7 @@ impl ActionWindow {
                     CaptureSource::Clipboard => (
                         format!("{} chars", captured_text.chars().count()),
                         if *truncated {
-                            Some("Clipboard text was truncated to your configured maximum length.".into())
+                            Some("Clipboard text truncated to configured maximum length.".into())
                         } else {
                             None
                         },
@@ -229,12 +233,12 @@ impl ActionWindow {
                     ),
                     CaptureSource::ClipboardEmpty => (
                         "Empty".into(),
-                        Some("Your clipboard has no plain text right now. Paste or type text below.".into()),
+                        Some("Clipboard contains no plain text. Paste or type below.".into()),
                         false,
                     ),
                     _ => (
                         "Unsupported".into(),
-                        Some("Clipboard contains non-text or protected data. Paste plain text below.".into()),
+                        Some("Clipboard holds non-text or protected content. Paste plain text below.".into()),
                         true,
                     ),
                 };
@@ -248,6 +252,7 @@ impl ActionWindow {
                     templates: templates.clone(),
                     image_width: 0,
                     image_height: 0,
+                    image_bytes: 0,
                     image_base64: String::new(),
                 }
             }
@@ -261,6 +266,7 @@ impl ActionWindow {
                 templates: Vec::new(),
                 image_width: data.width,
                 image_height: data.height,
+                image_bytes: data.png_bytes.len(),
                 image_base64: encode_base64(&data.png_bytes),
             },
         };

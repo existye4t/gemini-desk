@@ -14,9 +14,8 @@ use crate::hotkeys::HotkeyStatus;
 use crate::icon;
 use crate::performance::PerformanceMetrics;
 use crate::platform;
+use crate::ui_assets::{UI_PROTOCOL, handle_protocol_request, is_local_ui_url, page_url};
 use crate::webview::runtime_version_string;
-
-const SETTINGS_HTML: &str = include_str!("ui/settings.html");
 
 /// Typed IPC messages received strictly from the local, isolated Settings WebView.
 #[derive(Debug, Deserialize)]
@@ -54,7 +53,8 @@ fn utility_bg_rgba(is_dark: bool) -> (u8, u8, u8, u8) {
 }
 
 /// Lazy-created, strictly isolated Settings window.
-/// Exists only while open; closing destroys the window and frees all associated resources.
+/// Serves locally bundled SIL OFL 1.1 Geist fonts and CSS from memory via `geminidesk://`.
+/// Destroyed on close so zero background RAM is consumed when idle.
 pub struct SettingsWindow {
     window: Window,
     webview: WebView,
@@ -71,7 +71,7 @@ impl SettingsWindow {
     ) -> Result<Self, String> {
         let mut wb = WindowBuilder::new()
             .with_title("Settings — GeminiDesk")
-            .with_inner_size(LogicalSize::new(820.0, 580.0))
+            .with_inner_size(LogicalSize::new(840.0, 600.0))
             .with_min_inner_size(LogicalSize::new(720.0, 500.0))
             .with_visible(false);
 
@@ -88,8 +88,11 @@ impl SettingsWindow {
         let ipc_proxy = proxy.clone();
         let builder = WebViewBuilder::new_with_web_context(web_context)
             .with_background_color(utility_bg_rgba(is_dark))
-            .with_html(SETTINGS_HTML)
-            .with_navigation_handler(|uri| uri == "about:blank" || uri.starts_with("data:"))
+            .with_custom_protocol(UI_PROTOCOL.to_string(), |_id, req| {
+                handle_protocol_request(req)
+            })
+            .with_url(page_url("settings.html"))
+            .with_navigation_handler(|uri| is_local_ui_url(&uri))
             .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
             .with_ipc_handler(move |req| {
                 match serde_json::from_str::<SettingsIpcMessage>(req.body()) {

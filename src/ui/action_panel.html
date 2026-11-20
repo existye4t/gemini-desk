@@ -2,275 +2,504 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:;" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>GeminiDesk</title>
+<link rel="stylesheet" href="./design-system.css" />
 <style>
-  :root {
-    --bg: #0B0B0C;
-    --surface: #151516;
-    --elevated: #1C1C1E;
-    --elevated-hover: #242427;
-    --border: #29292B;
-    --border-subtle: #1F1F22;
-    --text: #F5F5F7;
-    --text-secondary: #98989F;
-    --text-tertiary: #65656B;
-    --primary: #F5F5F7;
-    --primary-fg: #0B0B0C;
-    --warn: #FF9F0A;
-  }
-
-  [data-theme="light"] {
-    --bg: #FFFFFF;
-    --surface: #F5F5F7;
-    --elevated: #F2F2F5;
-    --elevated-hover: #E7E7EC;
-    --border: #E2E2E7;
-    --border-subtle: #ECECF0;
-    --text: #1D1D1F;
-    --text-secondary: #6E6E73;
-    --text-tertiary: #8E8E93;
-    --primary: #1D1D1F;
-    --primary-fg: #FFFFFF;
-    --warn: #B25000;
-  }
-
-  * { box-sizing: border-box; }
-
-  html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    background: var(--bg);
-    color: var(--text);
-    font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    font-size: 13px;
-    line-height: 1.45;
-    -webkit-font-smoothing: antialiased;
-    overflow: hidden;
-  }
-
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
-
-  .wrap {
+  .sheet {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    padding: 18px 20px 16px;
-    gap: 12px;
+    background: var(--bg);
+    animation: gdSheetReveal var(--dur-panel) var(--ease) both;
   }
 
-  .header {
+  /* Refined Window Header */
+  .sheet-header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 12px;
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--divider);
+    flex-shrink: 0;
   }
 
-  .header h1 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: -0.015em;
-  }
-
-  .source-pill {
-    font-size: 11px;
-    color: var(--text-secondary);
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    white-space: nowrap;
-  }
-
-  .notice {
-    font-size: 12px;
-    color: var(--text-secondary);
-    padding: 8px 11px;
-    border-radius: 7px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-  }
-
-  .notice.warn {
-    color: var(--warn);
-  }
-
-  .chips {
+  .header-left {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
   }
 
-  .chip {
-    border: 1px solid var(--border);
+  .header-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-sm);
     background: var(--elevated);
-    color: var(--text-secondary);
-    border-radius: 6px;
-    padding: 5px 10px;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
-  }
-
-  .chip:hover {
-    background: var(--elevated-hover);
-    color: var(--text);
-  }
-
-  .chip.active {
-    background: var(--primary);
-    color: var(--primary-fg);
-    border-color: transparent;
-  }
-
-  .preview-frame {
-    flex: 1;
-    min-height: 160px;
+    border: 1px solid var(--border);
+    box-shadow: inset 0 1px 0 var(--inset-highlight);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px;
-    overflow: hidden;
-  }
-
-  .preview-frame img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    border-radius: 4px;
-  }
-
-  label.field-label {
-    font-size: 11.5px;
-    font-weight: 500;
+    flex-shrink: 0;
     color: var(--text-secondary);
-    display: block;
-    margin-bottom: 5px;
   }
 
-  textarea {
-    width: 100%;
-    flex: 1;
-    min-height: 120px;
-    resize: none;
-    background: var(--surface);
+  .header-icon svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .header-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 560;
+    letter-spacing: -0.015em;
     color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    font: inherit;
-    font-size: 13px;
-    line-height: 1.5;
-    outline: none;
   }
 
-  textarea:focus {
-    border-color: var(--text-secondary);
-  }
-
-  .compact-textarea {
-    flex: 0 0 68px;
-    min-height: 68px;
-  }
-
-  .footer {
+  .header-right {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding-top: 4px;
-    border-top: 1px solid var(--border-subtle);
+    gap: 6px;
+    flex-shrink: 0;
   }
 
-  .hint {
-    font-size: 11.5px;
-    color: var(--text-tertiary);
-  }
-
-  .actions {
+  /* Inline Status Banner */
+  .banner {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin: 12px 18px 0;
+    padding: 8px 11px;
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    flex-shrink: 0;
   }
 
-  .btn {
-    border: 1px solid var(--border);
+  .banner.warn {
+    background: var(--warn-surface);
+    border-color: var(--warn-border);
+    color: var(--warn);
+  }
+
+  .banner svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.7;
+  }
+
+  /* Sheet Body */
+  .sheet-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 18px;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  /* Quick Intent Rail (Ask with Selection) */
+  .intent-rail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    overflow: visible;
+    flex-shrink: 0;
+  }
+
+  .intent-pill {
+    height: 25px;
+    padding: 0 8.5px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    font-weight: 480;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background var(--dur-hover) var(--ease),
+      color var(--dur-hover) var(--ease),
+      border-color var(--dur-hover) var(--ease);
+  }
+
+  .intent-pill:hover {
     background: var(--elevated);
     color: var(--text);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font: inherit;
-    font-size: 12.5px;
-    font-weight: 500;
+  }
+
+  .intent-pill.active {
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-weight: 520;
+  }
+
+  /* Raycast-Style Command Palette Split (Clipboard Actions) */
+  .palette-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 212px 1fr;
+    gap: 12px;
+  }
+
+  .palette-sidebar {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--sidebar);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+
+  .palette-search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .palette-search-wrap svg {
+    width: 13px;
+    height: 13px;
+    stroke: var(--text-muted);
+    fill: none;
+    stroke-width: 1.8;
+    flex-shrink: 0;
+  }
+
+  .palette-search {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    outline: none;
+  }
+
+  .palette-search::placeholder { color: var(--text-muted); }
+
+  .cmd-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .cmd-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    height: 31px;
+    padding: 0 9px;
+    border: none;
+    border-radius: var(--r-xs);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 460;
+    text-align: left;
     cursor: pointer;
-    transition: background 0.1s ease;
+    transition:
+      background var(--dur-hover) var(--ease),
+      color var(--dur-hover) var(--ease);
   }
 
-  .btn:hover { background: var(--elevated-hover); }
-
-  .btn-primary {
-    background: var(--primary);
-    color: var(--primary-fg);
-    border-color: transparent;
+  .cmd-item:hover {
+    background: var(--elevated);
+    color: var(--text);
   }
 
-  .btn-primary:hover {
-    opacity: 0.9;
-    background: var(--primary);
+  .cmd-item.active {
+    background: var(--active-nav);
+    color: var(--text);
+    font-weight: 530;
+    box-shadow: inset 0 1px 0 var(--inset-highlight);
   }
 
-  [hidden] { display: none !important; }
+  .cmd-item .cmd-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    min-width: 14px;
+    text-align: right;
+  }
+
+  .cmd-empty {
+    padding: 18px 10px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+
+  /* Polished Writing Surface */
+  .editor-surface {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    transition: border-color var(--dur-hover) var(--ease);
+  }
+
+  .editor-surface:focus-within {
+    border-color: var(--border-strong);
+  }
+
+  .editor-area {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    padding: 13px 14px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.55;
+    resize: none;
+    outline: none;
+    user-select: text;
+  }
+
+  .editor-area::placeholder { color: var(--text-muted); }
+
+  .editor-meta-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-top: 1px solid var(--divider);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Screenshot Gallery Stage (Image-First, No Nested Clutter) */
+  .screenshot-stage {
+    position: relative;
+    flex: 1;
+    min-height: 200px;
+    border-radius: var(--r-md);
+    background-color: var(--stage-bg);
+    background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px);
+    background-size: 14px 14px;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+    overflow: hidden;
+  }
+
+  .screenshot-stage img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 5px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+  }
+
+  .stage-meta {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(11, 11, 12, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #F5F5F7;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    backdrop-filter: blur(8px);
+  }
+
+  .instruction-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    height: 38px;
+    border-radius: var(--r-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    transition: border-color var(--dur-hover) var(--ease);
+  }
+
+  .instruction-bar:focus-within {
+    border-color: var(--border-strong);
+  }
+
+  .instruction-bar input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    outline: none;
+    user-select: text;
+  }
+
+  .instruction-bar input::placeholder { color: var(--text-muted); }
+
+  /* Action Footer */
+  .sheet-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 18px 13px;
+    border-top: 1px solid var(--divider);
+    background: var(--sidebar);
+    flex-shrink: 0;
+  }
+
+  .footer-hints {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .hint-pair {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="header">
-      <h1 id="title">Ask Gemini</h1>
-      <span class="source-pill" id="badge">Ready</span>
+  <div class="sheet">
+    <header class="sheet-header">
+      <div class="header-left">
+        <div class="header-icon" id="header-icon"></div>
+        <h1 class="header-title" id="title">Ask Gemini</h1>
+      </div>
+      <div class="header-right">
+        <span class="gd-badge" id="badge">Ready</span>
+      </div>
+    </header>
+
+    <div class="banner" id="banner" hidden>
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span id="banner-text"></span>
     </div>
 
-    <div class="notice" id="notice" hidden></div>
+    <div class="sheet-body">
+      <!-- SELECTION MODE: Quick Intent Rail -->
+      <div class="intent-rail" id="intent-rail" hidden></div>
 
-    <!-- Action chips (used in Clipboard Actions and Selection modes) -->
-    <div class="chips" id="chips" hidden></div>
+      <!-- CLIPBOARD MODE: Command Palette + Live Editor Split -->
+      <div class="palette-layout" id="palette-layout" hidden>
+        <div class="palette-sidebar">
+          <div class="palette-search-wrap">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="palette-search" id="cmd-search" placeholder="Filter actions…" autocomplete="off" />
+          </div>
+          <div class="cmd-list" id="cmd-list" role="listbox" aria-label="Clipboard actions"></div>
+        </div>
 
-    <!-- Screenshot Preview (used in Screenshot mode) -->
-    <div class="preview-frame" id="preview-frame" hidden>
-      <img id="preview-img" alt="Captured screen region" />
-    </div>
+        <div class="editor-surface">
+          <textarea class="editor-area" id="palette-editor" placeholder="Select an action or edit your prompt…"></textarea>
+          <div class="editor-meta-bar">
+            <span id="palette-meta">0 chars</span>
+            <span>Editable before inserting</span>
+          </div>
+        </div>
+      </div>
 
-    <!-- Editable prompt review area -->
-    <div style="display:flex;flex-direction:column;flex:1;min-height:0;" id="editor-wrap">
-      <label class="field-label" id="editor-label" for="prompt-input">Review prompt before inserting into Gemini</label>
-      <textarea id="prompt-input" placeholder="Write or paste your prompt..."></textarea>
-    </div>
+      <!-- SELECTION MODE: Writing Surface -->
+      <div class="editor-surface" id="selection-editor-wrap" hidden>
+        <textarea class="editor-area" id="selection-editor" placeholder="Paste or type context to review before inserting into Gemini…"></textarea>
+        <div class="editor-meta-bar">
+          <span id="selection-meta">0 chars</span>
+          <button class="gd-btn gd-btn-ghost gd-btn-sm" style="height:20px;padding:0 6px;font-size:11px;" type="button" id="btn-clear-selection">Clear</button>
+        </div>
+      </div>
 
-    <div class="footer">
-      <span class="hint" id="footer-hint">Ctrl+Enter to insert · Esc to cancel (never auto-submits)</span>
-      <div class="actions">
-        <button class="btn" id="btn-cancel">Cancel</button>
-        <button class="btn" id="btn-retake" hidden>Retake</button>
-        <button class="btn" id="btn-copy">Copy</button>
-        <button class="btn btn-primary" id="btn-confirm">Insert into Gemini</button>
+      <!-- SCREENSHOT MODE: Gallery Stage + Instruction Bar -->
+      <div class="screenshot-stage" id="screenshot-stage" hidden>
+        <img id="preview-img" alt="Captured screen region" />
+        <span class="stage-meta" id="stage-meta">0 × 0 · PNG</span>
+      </div>
+      <div class="instruction-bar" id="instruction-bar" hidden>
+        <input type="text" id="screenshot-prompt" placeholder="Add an optional instruction for Gemini…" />
       </div>
     </div>
+
+    <footer class="sheet-footer">
+      <div class="footer-hints">
+        <span class="hint-pair">
+          <span class="gd-kbd-group"><kbd class="gd-kbd">Ctrl</kbd><kbd class="gd-kbd">↵</kbd></span>
+          <span id="confirm-hint">Insert (never auto-submits)</span>
+        </span>
+        <span class="hint-pair">
+          <kbd class="gd-kbd">Esc</kbd>
+          <span>Cancel</span>
+        </span>
+      </div>
+
+      <div class="footer-actions">
+        <button class="gd-btn gd-btn-ghost" type="button" id="btn-retake" hidden>Retake</button>
+        <button class="gd-btn" type="button" id="btn-copy">Copy</button>
+        <button class="gd-btn gd-btn-primary" type="button" id="btn-confirm">Insert into Gemini</button>
+      </div>
+    </footer>
   </div>
 
 <script>
   const $ = (id) => document.getElementById(id);
   let mode = 'selection';
   let rawCapturedText = '';
-  let templates = [];
+  let allTemplates = [];
+  let filteredTemplates = [];
+  let selectedCmdIdx = 0;
+
+  const ICONS = {
+    selection: '<svg viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>',
+    clipboard: '<svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>',
+    screenshot: '<svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+  };
 
   function post(payload) {
     window.ipc.postMessage(JSON.stringify(payload));
@@ -281,29 +510,83 @@
     return text ? `${tpl}\n\n${text}` : tpl;
   }
 
-  function renderChips(list, autoSelectFirst) {
-    const host = $('chips');
-    host.innerHTML = '';
-    if (!list || list.length === 0) {
-      host.hidden = true;
+  function formatKB(bytes) {
+    if (!bytes) return '';
+    return bytes >= 1024 * 1024
+      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  function updateCount(textareaEl, metaEl) {
+    const val = textareaEl.value;
+    const chars = val.length;
+    const lines = val ? val.split(/\r?\n/).length : 0;
+    metaEl.textContent = `${chars.toLocaleString()} chars${lines > 1 ? ` · ${lines} lines` : ''}`;
+  }
+
+  /* Clipboard Command Palette */
+  function renderCommandList() {
+    const list = $('cmd-list');
+    list.innerHTML = '';
+    if (filteredTemplates.length === 0) {
+      list.innerHTML = '<div class="cmd-empty">No matching action</div>';
       return;
     }
-    host.hidden = false;
-    list.forEach((item, idx) => {
+    selectedCmdIdx = Math.max(0, Math.min(selectedCmdIdx, filteredTemplates.length - 1));
+    filteredTemplates.forEach((tpl, idx) => {
       const btn = document.createElement('button');
-      btn.className = 'chip';
+      btn.type = 'button';
+      btn.className = `cmd-item ${idx === selectedCmdIdx ? 'active' : ''}`;
+      btn.setAttribute('role', 'option');
+      btn.setAttribute('aria-selected', idx === selectedCmdIdx ? 'true' : 'false');
+      const shortcutHint = idx < 9 ? `${idx + 1}` : '';
+      btn.innerHTML = `<span>${tpl.label.replace(/</g, '&lt;')}</span><span class="cmd-num">${shortcutHint}</span>`;
+      btn.addEventListener('click', () => selectCommand(idx));
+      list.appendChild(btn);
+    });
+  }
+
+  function selectCommand(idx) {
+    if (idx < 0 || idx >= filteredTemplates.length) return;
+    selectedCmdIdx = idx;
+    renderCommandList();
+    const tpl = filteredTemplates[idx];
+    $('palette-editor').value = rawCapturedText
+      ? applyTemplate(tpl.prompt, rawCapturedText)
+      : tpl.prompt.replaceAll('{{text}}', '');
+    updateCount($('palette-editor'), $('palette-meta'));
+  }
+
+  $('cmd-search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    filteredTemplates = q
+      ? allTemplates.filter((t) => t.label.toLowerCase().includes(q))
+      : [...allTemplates];
+    selectedCmdIdx = 0;
+    renderCommandList();
+    if (filteredTemplates.length > 0 && rawCapturedText) {
+      selectCommand(0);
+    }
+  });
+
+  /* Selection Quick Intent Rail */
+  function renderIntentRail(list) {
+    const rail = $('intent-rail');
+    rail.innerHTML = '';
+    const items = [{ label: 'Raw text', prompt: '{{text}}' }, ...list.slice(0, 6)];
+    items.forEach((item, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `intent-pill ${idx === 0 ? 'active' : ''}`;
       btn.textContent = item.label;
       btn.addEventListener('click', () => {
-        host.querySelectorAll('.chip').forEach((c) => c.classList.remove('active'));
+        rail.querySelectorAll('.intent-pill').forEach((p) => p.classList.remove('active'));
         btn.classList.add('active');
-        $('prompt-input').value = applyTemplate(item.prompt, rawCapturedText);
-        $('prompt-input').focus();
+        $('selection-editor').value = applyTemplate(item.prompt, rawCapturedText);
+        updateCount($('selection-editor'), $('selection-meta'));
+        $('selection-editor').focus();
       });
-      host.appendChild(btn);
-      if (autoSelectFirst && idx === 0) {
-        btn.classList.add('active');
-        $('prompt-input').value = applyTemplate(item.prompt, rawCapturedText);
-      }
+      rail.appendChild(btn);
     });
   }
 
@@ -311,89 +594,132 @@
     document.documentElement.setAttribute('data-theme', payload.effective_dark ? 'dark' : 'light');
     mode = payload.mode;
     rawCapturedText = payload.captured_text || '';
-    templates = payload.templates || [];
+    allTemplates = payload.templates || [];
+    filteredTemplates = [...allTemplates];
 
-    $('notice').hidden = !payload.notice;
+    $('header-icon').innerHTML = ICONS[mode] || ICONS.selection;
+
+    const banner = $('banner');
+    banner.hidden = !payload.notice;
     if (payload.notice) {
-      $('notice').textContent = payload.notice;
-      $('notice').className = payload.notice_warn ? 'notice warn' : 'notice';
+      $('banner-text').textContent = payload.notice;
+      banner.className = payload.notice_warn ? 'banner warn' : 'banner';
     }
+
+    $('intent-rail').hidden = true;
+    $('selection-editor-wrap').hidden = true;
+    $('palette-layout').hidden = true;
+    $('screenshot-stage').hidden = true;
+    $('instruction-bar').hidden = true;
+    $('btn-retake').hidden = true;
 
     if (mode === 'screenshot') {
       $('title').textContent = 'Screenshot to Gemini';
       $('badge').textContent = `${payload.image_width} × ${payload.image_height} px`;
-      $('chips').hidden = true;
-      $('preview-frame').hidden = false;
-      $('preview-img').src = `data:image/png;base64,${payload.image_base64}`;
-      $('editor-wrap').style.flex = '0 0 auto';
-      $('editor-label').textContent = 'Optional instruction';
-      $('prompt-input').className = 'compact-textarea';
-      $('prompt-input').placeholder = 'Add an optional question about this screenshot...';
-      $('prompt-input').value = '';
+      $('screenshot-stage').hidden = false;
+      $('instruction-bar').hidden = false;
       $('btn-retake').hidden = false;
+      $('preview-img').src = `data:image/png;base64,${payload.image_base64}`;
+      const sizeStr = formatKB(payload.image_bytes || 0);
+      $('stage-meta').textContent = `${payload.image_width} × ${payload.image_height} · PNG${sizeStr ? ` · ${sizeStr}` : ''}`;
       $('btn-copy').textContent = 'Copy Image';
       $('btn-confirm').textContent = 'Attach to Gemini';
-      $('footer-hint').textContent = 'Ctrl+Enter to attach · Esc to cancel';
+      $('confirm-hint').textContent = 'Attach to composer';
+      $('screenshot-prompt').value = '';
+      $('screenshot-prompt').focus();
     } else if (mode === 'clipboard') {
       $('title').textContent = 'Clipboard Actions';
       $('badge').textContent = payload.badge || 'Clipboard';
-      $('preview-frame').hidden = true;
-      $('editor-wrap').style.flex = '1';
-      $('editor-label').textContent = 'Prepared prompt (editable before sending)';
-      $('prompt-input').className = '';
-      $('btn-retake').hidden = true;
+      $('palette-layout').hidden = false;
       $('btn-copy').textContent = 'Copy';
       $('btn-confirm').textContent = 'Insert into Gemini';
-      renderChips(templates, !!rawCapturedText);
-      if (!rawCapturedText) $('prompt-input').value = '';
+      $('confirm-hint').textContent = 'Insert (never auto-submits)';
+      selectedCmdIdx = 0;
+      renderCommandList();
+      if (filteredTemplates.length > 0 && rawCapturedText) {
+        selectCommand(0);
+      } else {
+        $('palette-editor').value = rawCapturedText;
+        updateCount($('palette-editor'), $('palette-meta'));
+      }
+      $('cmd-search').focus();
     } else {
       $('title').textContent = 'Ask Gemini with Selection';
       $('badge').textContent = payload.badge || 'Selection';
-      $('preview-frame').hidden = true;
-      $('editor-wrap').style.flex = '1';
-      $('editor-label').textContent = 'Review context and add your question';
-      $('prompt-input').className = '';
-      $('btn-retake').hidden = true;
+      $('intent-rail').hidden = false;
+      $('selection-editor-wrap').hidden = false;
       $('btn-copy').textContent = 'Copy';
       $('btn-confirm').textContent = 'Insert into Gemini';
-      const quickTemplates = [
-        { label: 'Raw text', prompt: '{{text}}' },
-        ...templates.slice(0, 5),
-      ];
-      renderChips(quickTemplates, false);
-      $('prompt-input').value = rawCapturedText;
+      $('confirm-hint').textContent = 'Insert (never auto-submits)';
+      renderIntentRail(allTemplates);
+      $('selection-editor').value = rawCapturedText;
+      updateCount($('selection-editor'), $('selection-meta'));
+      $('selection-editor').focus();
     }
-
-    $('prompt-input').focus();
   };
+
+  $('selection-editor').addEventListener('input', () => updateCount($('selection-editor'), $('selection-meta')));
+  $('palette-editor').addEventListener('input', () => updateCount($('palette-editor'), $('palette-meta')));
+  $('btn-clear-selection').addEventListener('click', () => {
+    $('selection-editor').value = '';
+    updateCount($('selection-editor'), $('selection-meta'));
+    $('selection-editor').focus();
+  });
+
+  function currentPromptText() {
+    if (mode === 'screenshot') return $('screenshot-prompt').value.trim();
+    if (mode === 'clipboard') return $('palette-editor').value.trim();
+    return $('selection-editor').value.trim();
+  }
 
   function submitPrimary() {
     if (mode === 'screenshot') {
-      post({ type: 'confirm_screenshot', prompt: $('prompt-input').value.trim() });
+      post({ type: 'confirm_screenshot', prompt: currentPromptText() });
     } else {
-      const text = $('prompt-input').value.trim();
+      const text = currentPromptText();
       if (!text) return;
       post({ type: 'confirm_text', prompt: text });
     }
   }
 
   $('btn-confirm').addEventListener('click', submitPrimary);
-  $('btn-cancel').addEventListener('click', () => post({ type: 'cancel' }));
   $('btn-retake').addEventListener('click', () => post({ type: 'retake_screenshot' }));
   $('btn-copy').addEventListener('click', () => {
     if (mode === 'screenshot') {
       post({ type: 'copy_screenshot' });
     } else {
-      post({ type: 'copy_text', prompt: $('prompt-input').value });
+      post({ type: 'copy_text', prompt: currentPromptText() });
     }
   });
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       post({ type: 'cancel' });
-    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      return;
+    }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       submitPrimary();
+      return;
+    }
+    if (mode === 'clipboard') {
+      if (e.altKey && e.key >= '1' && e.key <= '9') {
+        e.preventDefault();
+        selectCommand(parseInt(e.key, 10) - 1);
+        return;
+      }
+      if (document.activeElement === $('cmd-search')) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          selectCommand(Math.min(filteredTemplates.length - 1, selectedCmdIdx + 1));
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          selectCommand(Math.max(0, selectedCmdIdx - 1));
+        } else if (e.key === 'Enter' && !e.ctrlKey) {
+          e.preventDefault();
+          $('palette-editor').focus();
+        }
+      }
     }
   });
 
