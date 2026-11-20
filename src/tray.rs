@@ -1,0 +1,69 @@
+use muda::{Menu, MenuItem, PredefinedMenuItem};
+use tracing::warn;
+use tray_icon::{TrayIcon, TrayIconBuilder};
+
+use crate::icon;
+
+pub const MENU_OPEN_GEMINI: &str = "open_gemini";
+pub const MENU_QUICK_CHAT: &str = "quick_chat";
+pub const MENU_NEW_CHAT: &str = "new_chat";
+pub const MENU_SETTINGS: &str = "settings";
+pub const MENU_QUIT: &str = "quit";
+
+/// Persistent system tray icon and context menu.
+pub struct TrayController {
+    _tray_icon: TrayIcon,
+    quick_chat_item: MenuItem,
+}
+
+impl TrayController {
+    pub fn new(quick_chat_shortcut: &str) -> Result<Self, tray_icon::Error> {
+        let menu = Menu::new();
+
+        let open_item = MenuItem::with_id(MENU_OPEN_GEMINI, "Open Gemini", true, None);
+        let quick_label = format_quick_chat_label(quick_chat_shortcut);
+        let quick_chat_item = MenuItem::with_id(MENU_QUICK_CHAT, quick_label, true, None);
+        let new_chat_item = MenuItem::with_id(MENU_NEW_CHAT, "New Chat", true, None);
+        let settings_item = MenuItem::with_id(MENU_SETTINGS, "Settings...", true, None);
+        let quit_item = MenuItem::with_id(MENU_QUIT, "Quit GeminiDesk", true, None);
+
+        let _ = menu.append(&open_item);
+        let _ = menu.append(&quick_chat_item);
+        let _ = menu.append(&new_chat_item);
+        let _ = menu.append(&PredefinedMenuItem::separator());
+        let _ = menu.append(&settings_item);
+        let _ = menu.append(&PredefinedMenuItem::separator());
+        let _ = menu.append(&quit_item);
+
+        let mut builder = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("GeminiDesk — Unofficial Gemini Client")
+            .with_menu_on_left_click(false);
+
+        if let Some(icon) = icon::tray_icon() {
+            builder = builder.with_icon(icon);
+        } else {
+            warn!("Failed to build RGBA tray icon");
+        }
+
+        let tray_icon = builder.build()?;
+        Ok(Self {
+            _tray_icon: tray_icon,
+            quick_chat_item,
+        })
+    }
+
+    pub fn update_quick_chat_shortcut(&self, shortcut: &str) {
+        self.quick_chat_item
+            .set_text(format_quick_chat_label(shortcut));
+    }
+}
+
+fn format_quick_chat_label(shortcut: &str) -> String {
+    let trimmed = shortcut.trim();
+    if trimmed.is_empty() {
+        "Quick Chat".to_string()
+    } else {
+        format!("Quick Chat  ({trimmed})")
+    }
+}
