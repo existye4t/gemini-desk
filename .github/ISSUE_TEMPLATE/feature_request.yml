@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a native desktop enhancement or platform integration
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Workflow Need
+      description: Describe the desktop workflow you want to improve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How should this work while keeping GeminiDesk lightweight, private, and faithful to genuine Google Gemini?
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Target Platform(s)
+      options:
+        - Cross-Platform (Windows, Linux, macOS)
+        - Windows
+        - Linux (Wayland / KDE / GNOME)
+        - macOS
+    validations:
+      required: true

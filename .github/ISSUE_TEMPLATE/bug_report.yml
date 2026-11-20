@@ -1,0 +1,55 @@
+name: Bug Report
+description: Report a bug, regression, or platform compatibility issue in GeminiDesk
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do **not** attach screenshots containing Google authentication cookies, tokens, or private conversations.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating System & Session
+      options:
+        - Windows 11 (x64)
+        - Windows 10 (x64)
+        - Linux — Arch / CachyOS (KDE Plasma · Wayland)
+        - Linux — KDE Plasma (X11)
+        - Linux — GNOME (Wayland)
+        - Linux — GNOME (X11)
+        - Linux — Other
+        - macOS — Apple Silicon (arm64)
+        - macOS — Intel (x86_64)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GeminiDesk & WebView Runtime Version
+      placeholder: "e.g., GeminiDesk 0.4.0, WebView2 157.0.4341.60 / WebKitGTK 2.46"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the issue clearly, including expected vs. actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Launch GeminiDesk
+        2. Trigger...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted Logs (optional)
+      description: Run with `RUST_LOG=info` and paste relevant lines (GeminiDesk automatically redacts URL query strings).
+      render: shell
