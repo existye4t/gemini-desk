@@ -12,8 +12,9 @@ use crate::app::AppEvent;
 use crate::config::AppConfig;
 use crate::hotkeys::HotkeyStatus;
 use crate::icon;
+use crate::performance::PerformanceMetrics;
 use crate::platform;
-use crate::webview::{background_rgba, runtime_version_string};
+use crate::webview::runtime_version_string;
 
 const SETTINGS_HTML: &str = include_str!("ui/settings.html");
 
@@ -22,7 +23,9 @@ const SETTINGS_HTML: &str = include_str!("ui/settings.html");
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SettingsIpcMessage {
     Ready,
-    SaveConfig { config: AppConfig },
+    SaveConfig { config: Box<AppConfig> },
+    ResetTemplates,
+    RequestMetrics,
     ClearCache,
     OpenProfileFolder,
     Close,
@@ -38,14 +41,24 @@ pub struct SettingsViewState {
     pub webview_version: String,
     pub profile_path: String,
     pub cache_size_bytes: u64,
+    pub initial_tab: Option<String>,
     pub toast: Option<String>,
 }
 
+fn utility_bg_rgba(is_dark: bool) -> (u8, u8, u8, u8) {
+    if is_dark {
+        (0x0B, 0x0B, 0x0C, 255)
+    } else {
+        (0xFF, 0xFF, 0xFF, 255)
+    }
+}
+
 /// Lazy-created, strictly isolated Settings window.
-/// Only exists while open; closing destroys the window and frees all associated resources.
+/// Exists only while open; closing destroys the window and frees all associated resources.
 pub struct SettingsWindow {
     window: Window,
     webview: WebView,
+    pending_tab: Option<String>,
 }
 
 impl SettingsWindow {
@@ -53,12 +66,13 @@ impl SettingsWindow {
         target: &EventLoopWindowTarget<AppEvent>,
         web_context: &mut WebContext,
         is_dark: bool,
+        initial_tab: Option<String>,
         proxy: EventLoopProxy<AppEvent>,
     ) -> Result<Self, String> {
         let mut wb = WindowBuilder::new()
-            .with_title("GeminiDesk Settings")
-            .with_inner_size(LogicalSize::new(660.0, 720.0))
-            .with_min_inner_size(LogicalSize::new(540.0, 540.0))
+            .with_title("Settings — GeminiDesk")
+            .with_inner_size(LogicalSize::new(820.0, 580.0))
+            .with_min_inner_size(LogicalSize::new(720.0, 500.0))
             .with_visible(false);
 
         if let Some(win_icon) = icon::window_icon() {
@@ -69,13 +83,12 @@ impl SettingsWindow {
             .build(target)
             .map_err(|e| format!("Failed to create settings window: {e}"))?;
 
-        platform::style_main_window(&window, is_dark);
+        platform::style_utility_window(&window, is_dark);
 
         let ipc_proxy = proxy.clone();
         let builder = WebViewBuilder::new_with_web_context(web_context)
-            .with_background_color(background_rgba(is_dark))
+            .with_background_color(utility_bg_rgba(is_dark))
             .with_html(SETTINGS_HTML)
-            // Strictly block all external network navigation inside Settings.
             .with_navigation_handler(|uri| uri == "about:blank" || uri.starts_with("data:"))
             .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
             .with_ipc_handler(move |req| {
@@ -105,25 +118,32 @@ impl SettingsWindow {
         window.set_visible(true);
         platform::focus_window(&window);
 
-        Ok(Self { window, webview })
+        Ok(Self {
+            window,
+            webview,
+            pending_tab: initial_tab,
+        })
     }
 
     pub fn id(&self) -> WindowId {
         self.window.id()
     }
 
-    pub fn focus(&self) {
+    pub fn focus_with_tab(&mut self, tab: Option<String>) {
+        if tab.is_some() {
+            self.pending_tab = tab;
+        }
         self.window.set_visible(true);
         platform::focus_window(&self.window);
     }
 
     pub fn apply_theme(&self, is_dark: bool) {
-        platform::style_main_window(&self.window, is_dark);
-        let _ = self.webview.set_background_color(background_rgba(is_dark));
+        platform::style_utility_window(&self.window, is_dark);
+        let _ = self.webview.set_background_color(utility_bg_rgba(is_dark));
     }
 
     pub fn push_state(
-        &self,
+        &mut self,
         config: &AppConfig,
         hotkeys: &HotkeyStatus,
         effective_dark: bool,
@@ -131,6 +151,7 @@ impl SettingsWindow {
         cache_size_bytes: u64,
         toast: Option<String>,
     ) {
+        let initial_tab = self.pending_tab.take();
         let payload = SettingsViewState {
             config: config.clone(),
             hotkeys: hotkeys.clone(),
@@ -139,12 +160,22 @@ impl SettingsWindow {
             webview_version: runtime_version_string(),
             profile_path,
             cache_size_bytes,
+            initial_tab,
             toast,
         };
         if let Ok(json) = serde_json::to_string(&payload) {
             let script = format!("window.__geminidesk_apply_state({json});");
             if let Err(err) = self.webview.evaluate_script(&script) {
-                warn!(?err, "Failed to update Settings UI state");
+                warn!(?err, "Failed to push state to Settings UI");
+            }
+        }
+    }
+
+    pub fn push_metrics(&self, metrics: &PerformanceMetrics) {
+        if let Ok(json) = serde_json::to_string(metrics) {
+            let script = format!("window.__geminidesk_apply_metrics({json});");
+            if let Err(err) = self.webview.evaluate_script(&script) {
+                warn!(?err, "Failed to push metrics to Settings UI");
             }
         }
     }

@@ -1,158 +1,239 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GeminiDesk Settings</title>
+<title>Settings — GeminiDesk</title>
 <style>
   :root {
-    --bg: #131314;
-    --surface: #1e1f20;
-    --surface-hover: #282a2c;
-    --border: #2e3033;
-    --text: #e3e3e3;
-    --text-muted: #9aa0a6;
-    --accent: #a8c7fa;
-    --accent-bg: #0842a0;
-    --accent-text: #062e6f;
-    --ok: #81c995;
-    --warn: #fdd663;
-    --input-bg: #131314;
-    --radius: 12px;
+    --bg: #0B0B0C;
+    --sidebar: #151516;
+    --elevated: #1C1C1E;
+    --elevated-hover: #242427;
+    --active-nav: #232326;
+    --border: #29292B;
+    --border-subtle: #1F1F22;
+    --text: #F5F5F7;
+    --text-secondary: #98989F;
+    --text-tertiary: #65656B;
+    --control-on: #F5F5F7;
+    --control-on-fg: #0B0B0C;
+    --control-off: #2C2C30;
+    --thumb-off: #98989F;
+    --focus-ring: rgba(245, 245, 247, 0.35);
+    --ok: #30D158;
+    --warn: #FF9F0A;
+    --danger: #FF453A;
   }
 
   [data-theme="light"] {
-    --bg: #ffffff;
-    --surface: #f0f4f9;
-    --surface-hover: #e5ebf3;
-    --border: #dde3ea;
-    --text: #1f1f1f;
-    --text-muted: #5f6368;
-    --accent: #0b57d0;
-    --accent-bg: #d3e3fd;
-    --accent-text: #ffffff;
-    --ok: #137333;
-    --warn: #b06000;
-    --input-bg: #ffffff;
+    --bg: #FFFFFF;
+    --sidebar: #F5F5F7;
+    --elevated: #F2F2F5;
+    --elevated-hover: #E8E8ED;
+    --active-nav: #E5E5EA;
+    --border: #E2E2E7;
+    --border-subtle: #ECECF0;
+    --text: #1D1D1F;
+    --text-secondary: #6E6E73;
+    --text-tertiary: #8E8E93;
+    --control-on: #1D1D1F;
+    --control-on-fg: #FFFFFF;
+    --control-off: #D2D2D7;
+    --thumb-off: #FFFFFF;
+    --focus-ring: rgba(29, 29, 31, 0.25);
+    --ok: #248A3D;
+    --warn: #B25000;
+    --danger: #D70015;
   }
 
   * { box-sizing: border-box; }
 
-  ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 999px;
-  }
-  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-
   html, body {
     margin: 0;
     padding: 0;
+    height: 100%;
     background: var(--bg);
     color: var(--text);
-    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
-    font-size: 13.5px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 13px;
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
     user-select: none;
+    overflow: hidden;
   }
 
-  .container {
-    max-width: 620px;
-    margin: 0 auto;
-    padding: 20px 22px 28px;
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 204px 1fr;
+    height: 100vh;
   }
 
-  header {
+  /* Left Preferences Sidebar */
+  aside {
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    padding: 14px 10px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow-y: auto;
+  }
+
+  .nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 450;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+
+  .nav-item:hover {
+    background: var(--elevated);
+    color: var(--text);
+  }
+
+  .nav-item.active {
+    background: var(--active-nav);
+    color: var(--text);
+    font-weight: 550;
+  }
+
+  .nav-item:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -1px;
+  }
+
+  .nav-item svg {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.85;
+  }
+
+  .nav-item.active svg { opacity: 1; }
+
+  .sidebar-footer {
+    padding: 10px 10px 2px;
+    font-size: 11px;
+    color: var(--text-tertiary);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 18px;
   }
 
-  .title-block h1 {
-    margin: 0;
-    font-size: 19px;
+  /* Right Content Pane */
+  main {
+    background: var(--bg);
+    overflow-y: auto;
+    padding: 24px 32px 36px;
+  }
+
+  .panel { display: none; max-width: 560px; }
+  .panel.active { display: block; }
+
+  .panel-title {
+    margin: 0 0 2px;
+    font-size: 16px;
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
+    color: var(--text);
   }
 
-  .title-block p {
-    margin: 2px 0 0;
-    font-size: 12px;
-    color: var(--text-muted);
+  .panel-subtitle {
+    margin: 0 0 20px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
   }
 
-  .badge {
+  .group-label {
+    margin: 22px 0 6px;
     font-size: 11px;
-    font-weight: 500;
-    padding: 3px 9px;
-    border-radius: 999px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-  }
-
-  section {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 16px;
-    margin-bottom: 14px;
-  }
-
-  .section-title {
-    font-size: 11.5px;
     font-weight: 600;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    margin: 14px 0 6px 2px;
+    color: var(--text-tertiary);
+  }
+
+  .group-label:first-of-type { margin-top: 4px; }
+
+  .rows {
+    border-top: 1px solid var(--border-subtle);
   }
 
   .row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
+    gap: 18px;
+    min-height: 46px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  .row:last-child {
-    border-bottom: none;
-  }
-
-  .row-col {
+  .row-stack {
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
+    gap: 10px;
   }
 
-  .label-group {
+  .row-text {
     flex: 1;
     min-width: 0;
   }
 
-  .label-title {
+  .row-label {
+    font-size: 13px;
     font-weight: 500;
     color: var(--text);
   }
 
-  .label-desc {
-    font-size: 12px;
-    color: var(--text-muted);
+  .row-desc {
     margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
-  /* Toggle Switch */
+  .row-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  /* Minimalist Monochrome Switch */
   .switch {
     position: relative;
     display: inline-block;
-    width: 40px;
-    height: 22px;
+    width: 34px;
+    height: 19px;
     flex-shrink: 0;
   }
 
@@ -160,438 +241,1125 @@
     opacity: 0;
     width: 0;
     height: 0;
+    position: absolute;
   }
 
-  .slider {
+  .track {
     position: absolute;
     inset: 0;
-    cursor: pointer;
-    background: var(--border);
     border-radius: 999px;
-    transition: background 0.16s ease;
+    background: var(--control-off);
+    cursor: pointer;
+    transition: background 0.14s ease;
   }
 
-  .slider::before {
+  .track::before {
     content: "";
     position: absolute;
-    height: 16px;
-    width: 16px;
-    left: 3px;
-    top: 3px;
-    background: #ffffff;
+    width: 15px;
+    height: 15px;
+    left: 2px;
+    top: 2px;
     border-radius: 50%;
-    transition: transform 0.16s ease;
+    background: var(--thumb-off);
+    transition: transform 0.14s ease, background 0.14s ease;
   }
 
-  input:checked + .slider {
-    background: var(--accent);
+  .switch input:checked + .track {
+    background: var(--control-on);
   }
 
-  input:checked + .slider::before {
-    transform: translateX(18px);
-    background: var(--accent-text);
+  .switch input:checked + .track::before {
+    transform: translateX(15px);
+    background: var(--control-on-fg);
   }
 
-  select, input[type="text"] {
-    background: var(--input-bg);
+  .switch input:focus-visible + .track {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* Segmented Control (macOS style) */
+  .segmented {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    gap: 2px;
+  }
+
+  .seg-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 11px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+
+  .seg-btn:hover { color: var(--text); }
+
+  .seg-btn.active {
+    background: var(--control-on);
+    color: var(--control-on-fg);
+  }
+
+  .seg-btn:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+
+  /* Inputs & Selects */
+  select, input[type="text"], input[type="number"], textarea {
+    background: var(--elevated);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 10px;
+    border-radius: 6px;
+    padding: 5px 9px;
     font: inherit;
-    font-size: 13px;
+    font-size: 12.5px;
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.12s ease;
   }
 
-  select:focus, input[type="text"]:focus {
-    border-color: var(--accent);
+  select:hover, input[type="text"]:hover, input[type="number"]:hover, textarea:hover {
+    border-color: var(--text-tertiary);
   }
 
-  .shortcut-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  select:focus, input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
+    border-color: var(--text-secondary);
   }
 
-  .shortcut-input {
-    width: 175px;
-    font-family: "Cascadia Code", "Consolas", monospace;
-    font-size: 12.5px;
+  select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2398989F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    cursor: pointer;
   }
 
+  .key-input {
+    width: 152px;
+    font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+    font-size: 12px;
+    text-align: center;
+    letter-spacing: 0.01em;
+  }
+
+  .num-input {
+    width: 74px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Range Slider */
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 128px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--control-off);
+    outline: none;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--control-on);
+    cursor: pointer;
+  }
+
+  .value-tag {
+    min-width: 38px;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+  }
+
+  /* Buttons */
   .btn {
-    background: var(--surface-hover);
-    color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 12px;
+    background: var(--elevated);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 11px;
     font: inherit;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.14s ease, border-color 0.14s ease;
+    transition: background 0.1s ease, border-color 0.1s ease;
   }
 
   .btn:hover {
-    border-color: var(--accent);
+    background: var(--elevated-hover);
+    border-color: var(--text-tertiary);
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 1px;
   }
 
   .btn-primary {
-    background: var(--accent);
-    color: var(--accent-text);
+    background: var(--control-on);
+    color: var(--control-on-fg);
     border-color: transparent;
   }
 
   .btn-primary:hover {
-    opacity: 0.92;
+    opacity: 0.88;
+    background: var(--control-on);
   }
 
-  .btn-chip {
-    padding: 3px 8px;
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+  }
+
+  .btn-ghost:hover {
+    background: var(--elevated);
+    color: var(--text);
+    border-color: transparent;
+  }
+
+  .btn-danger {
+    color: var(--danger);
+  }
+
+  /* Shortcut status dots */
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    background: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+  .status-dot.ok { background: var(--ok); }
+  .status-dot.warn { background: var(--warn); }
+
+  .hint-warn {
     font-size: 11.5px;
-    border-radius: 6px;
+    color: var(--warn);
+    margin-top: 3px;
   }
 
-  .chips {
+  /* Compact Performance Metrics Grid */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border-subtle);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0 8px;
+  }
+
+  .metric-cell {
+    background: var(--bg);
+    padding: 12px 14px;
+  }
+
+  .metric-k {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 3px;
+  }
+
+  .metric-v {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.015em;
+    color: var(--text);
+  }
+
+  .metric-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  /* Custom Templates List */
+  .template-list {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 6px;
-    margin-top: 4px;
   }
 
-  .status-line {
-    font-size: 11.5px;
-    margin-top: 4px;
+  .template-item {
+    display: grid;
+    grid-template-columns: 128px 1fr auto;
+    gap: 8px;
+    align-items: start;
   }
 
-  .status-ok { color: var(--ok); }
-  .status-warn { color: var(--warn); }
+  .template-item textarea {
+    min-height: 46px;
+    height: 46px;
+    resize: vertical;
+    font-size: 12px;
+    line-height: 1.4;
+  }
 
   .mono-path {
-    font-family: "Cascadia Code", "Consolas", monospace;
+    font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
     font-size: 11.5px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     word-break: break-all;
     user-select: text;
+    margin-top: 3px;
   }
 
-  .about-grid {
-    display: grid;
-    grid-template-columns: 120px 1fr;
-    gap: 6px 12px;
-    padding: 10px 0;
+  /* About View */
+  .about-hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 0 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 6px;
+  }
+
+  .about-emblem {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .about-name {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  .about-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .kv-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border-subtle);
     font-size: 12.5px;
   }
 
-  .about-key { color: var(--text-muted); }
-  .about-val { color: var(--text); user-select: text; }
+  .kv-k { color: var(--text-secondary); }
+  .kv-v { color: var(--text); user-select: text; font-variant-numeric: tabular-nums; }
 
-  .disclaimer {
-    font-size: 11.5px;
-    color: var(--text-muted);
-    padding: 8px 0 10px;
-    border-top: 1px solid var(--border);
+  .legal-note {
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.55;
   }
 
   .toast {
     position: fixed;
-    bottom: 14px;
-    right: 18px;
-    background: var(--surface-hover);
-    color: var(--text);
+    right: 20px;
+    bottom: 16px;
+    padding: 7px 12px;
+    border-radius: 7px;
+    background: var(--elevated);
     border: 1px solid var(--border);
-    padding: 8px 14px;
-    border-radius: 8px;
-    font-size: 12.5px;
+    color: var(--text);
+    font-size: 12px;
     opacity: 0;
-    transform: translateY(6px);
-    transition: opacity 0.16s ease, transform 0.16s ease;
+    transform: translateY(4px);
+    transition: opacity 0.14s ease, transform 0.14s ease;
     pointer-events: none;
   }
 
-  .toast.show {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  .toast.show { opacity: 1; transform: translateY(0); }
 </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="title-block">
-        <h1>GeminiDesk Settings</h1>
-        <p>Unofficial lightweight Rust desktop client for Google Gemini</p>
+  <div class="shell">
+    <aside role="tablist" aria-label="Settings sections">
+      <div class="nav-list" id="nav-list">
+        <button class="nav-item active" role="tab" aria-selected="true" data-tab="general">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>General</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="appearance">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 7.5 16.5 12 12 16.5"/></svg>
+          <span>Appearance</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="shortcuts">
+          <svg viewBox="0 0 24 24"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/></svg>
+          <span>Shortcuts</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="quick_chat">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>Quick Chat</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="productivity">
+          <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>Productivity</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="performance">
+          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <span>Performance</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="privacy">
+          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span>Privacy</span>
+        </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="about">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>About</span>
+        </button>
       </div>
-      <span class="badge" id="version-badge">v0.2.0</span>
-    </header>
-
-    <div class="section-title">General &amp; Window Behavior</div>
-    <section>
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">Launch at Windows startup</div>
-          <div class="label-desc">Starts silently in the system tray ready for Quick Chat.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="launch_at_startup" />
-          <span class="slider"></span>
-        </label>
+      <div class="sidebar-footer">
+        <span>GeminiDesk</span>
+        <span id="sidebar-ver">v0.3.0</span>
       </div>
+    </aside>
 
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">Close button behavior</div>
-          <div class="label-desc">Choose what happens when clicking X on the main window.</div>
-        </div>
-        <select id="close_behavior">
-          <option value="minimize_to_tray">Hide to system tray</option>
-          <option value="quit">Quit GeminiDesk</option>
-        </select>
-      </div>
+    <main>
+      <!-- GENERAL -->
+      <section class="panel active" id="panel-general">
+        <h1 class="panel-title">General</h1>
+        <p class="panel-subtitle">Startup and desktop window lifecycle.</p>
 
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">Minimize to system tray</div>
-          <div class="label-desc">Hide from taskbar into the tray when minimizing the main window.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="minimize_to_tray" />
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">Appearance</div>
-          <div class="label-desc">Controls native window title bar, Quick Chat border, and WebView theme.</div>
-        </div>
-        <select id="theme">
-          <option value="system">System default</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-      </div>
-    </section>
-
-    <div class="section-title">Quick Chat &amp; Global Shortcuts</div>
-    <section>
-      <div class="row row-col">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-          <div class="label-group">
-            <div class="label-title">Quick Chat shortcut</div>
-            <div class="label-desc">Summons floating Quick Chat over any app. Press Esc to hide, Ctrl+Shift+E to expand.</div>
+        <div class="group-label">System</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Launch at startup</div>
+              <div class="row-desc">Start quietly in the system tray at login.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="launch_at_startup" /><span class="track"></span></label>
           </div>
-          <div class="shortcut-controls">
-            <input type="text" class="shortcut-input" id="quick_chat_shortcut" placeholder="Alt+Space" />
-            <button class="btn btn-primary" id="apply_shortcuts">Apply</button>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Close button behavior</div>
+            </div>
+            <select id="close_behavior">
+              <option value="minimize_to_tray">Hide to tray</option>
+              <option value="quit">Quit application</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Minimize to system tray</div>
+              <div class="row-desc">Hide from the taskbar when minimized.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="minimize_to_tray" /><span class="track"></span></label>
           </div>
         </div>
-        <div class="chips">
-          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Alt+Space">Alt+Space</button>
-          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Ctrl+Alt+G">Ctrl+Alt+G</button>
-          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Alt+G">Alt+G</button>
-          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Ctrl+Shift+Space">Ctrl+Shift+Space</button>
-        </div>
-        <div class="status-line" id="quick_chat_status"></div>
-      </div>
+      </section>
 
-      <div class="row row-col">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-          <div class="label-group">
-            <div class="label-title">Full Gemini Window shortcut</div>
-            <div class="label-desc">Opens or focuses the full Gemini workspace window from anywhere.</div>
+      <!-- APPEARANCE -->
+      <section class="panel" id="panel-appearance">
+        <h1 class="panel-title">Appearance</h1>
+        <p class="panel-subtitle">Window chrome, native theme, and companion presentation.</p>
+
+        <div class="group-label">Theme</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Color scheme</div>
+              <div class="row-desc">Applies to title bars, utility sheets, and WebView.</div>
+            </div>
+            <div class="segmented" id="theme-seg">
+              <button class="seg-btn" data-val="system">System</button>
+              <button class="seg-btn" data-val="dark">Dark</button>
+              <button class="seg-btn" data-val="light">Light</button>
+            </div>
           </div>
-          <input type="text" class="shortcut-input" id="full_window_shortcut" placeholder="Alt+Shift+Space" />
         </div>
-        <div class="status-line" id="full_window_status"></div>
-      </div>
 
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">Hide Quick Chat when clicking outside</div>
-          <div class="label-desc">Automatically dismisses the floating overlay when another window receives focus.</div>
+        <div class="group-label">Floating Companion</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Always on top</div>
+              <div class="row-desc">Keep Companion above other windows. Toggle anytime with Ctrl+Shift+T.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="companion_always_on_top" /><span class="track"></span></label>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Window opacity</div>
+            </div>
+            <div class="row-right">
+              <input type="range" id="companion_opacity" min="60" max="100" step="5" />
+              <span class="value-tag" id="companion_opacity_val">100%</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Snap to screen edges</div>
+              <div class="row-desc">Magnetically align Companion to monitor borders while dragging.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="companion_snap_to_edges" /><span class="track"></span></label>
+          </div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="quick_chat_hide_on_blur" />
-          <span class="slider"></span>
-        </label>
-      </div>
-    </section>
+      </section>
 
-    <div class="section-title">Performance &amp; Storage</div>
-    <section>
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">Reduce background memory when hidden</div>
-          <div class="label-desc">Switches WebView2 to Low memory usage target while minimized to tray, preserving sessions.</div>
+      <!-- SHORTCUTS -->
+      <section class="panel" id="panel-shortcuts">
+        <h1 class="panel-title">Shortcuts</h1>
+        <p class="panel-subtitle">Global keyboard triggers across Windows. Leave blank to disable.</p>
+
+        <div class="group-label">Windows</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Quick Chat</div>
+              <div class="hint-warn" id="err-quick_chat" hidden></div>
+            </div>
+            <div class="row-right">
+              <span class="status-dot" id="dot-quick_chat"></span>
+              <input type="text" class="key-input" id="quick_chat_shortcut" placeholder="Alt+Space" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Full Gemini window</div>
+              <div class="hint-warn" id="err-full_window" hidden></div>
+            </div>
+            <div class="row-right">
+              <span class="status-dot" id="dot-full_window"></span>
+              <input type="text" class="key-input" id="full_window_shortcut" placeholder="Alt+Shift+Space" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Floating Companion</div>
+              <div class="hint-warn" id="err-companion" hidden></div>
+            </div>
+            <div class="row-right">
+              <span class="status-dot" id="dot-companion"></span>
+              <input type="text" class="key-input" id="companion_shortcut" placeholder="Alt+Shift+G" />
+            </div>
+          </div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="reduce_memory_when_hidden" />
-          <span class="slider"></span>
-        </label>
-      </div>
 
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">WebView cache (<span id="cache_size">Calculating...</span>)</div>
-          <div class="label-desc">Clears HTTP, shader, and code caches without signing you out of Google.</div>
+        <div class="group-label">Productivity Triggers (Opt-In)</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Ask Gemini with Selection</div>
+              <div class="row-desc" id="sub-ask_selection">Enable in Productivity to register.</div>
+              <div class="hint-warn" id="err-ask_selection" hidden></div>
+            </div>
+            <div class="row-right">
+              <span class="status-dot" id="dot-ask_selection"></span>
+              <input type="text" class="key-input" id="ask_selection_shortcut" placeholder="Alt+Shift+A" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Capture Screenshot</div>
+              <div class="row-desc" id="sub-screenshot">Enable in Productivity to register.</div>
+              <div class="hint-warn" id="err-screenshot" hidden></div>
+            </div>
+            <div class="row-right">
+              <span class="status-dot" id="dot-screenshot"></span>
+              <input type="text" class="key-input" id="screenshot_shortcut" placeholder="Alt+Shift+S" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Clipboard Actions</div>
+              <div class="row-desc" id="sub-clipboard_actions">Enable in Productivity to register.</div>
+              <div class="hint-warn" id="err-clipboard_actions" hidden></div>
+            </div>
+            <div class="row-right">
+              <span class="status-dot" id="dot-clipboard_actions"></span>
+              <input type="text" class="key-input" id="clipboard_actions_shortcut" placeholder="Alt+Shift+C" />
+            </div>
+          </div>
         </div>
-        <button class="btn" id="clear_cache_btn">Clear Cache</button>
-      </div>
 
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">WebView profile location</div>
-          <div class="mono-path" id="profile_path">—</div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+          <button class="btn" id="reset_shortcuts">Reset Defaults</button>
+          <button class="btn btn-primary" id="apply_shortcuts">Apply Shortcuts</button>
         </div>
-        <button class="btn" id="open_profile_btn">Open Folder</button>
-      </div>
-    </section>
+      </section>
 
-    <div class="section-title">About</div>
-    <section>
-      <div class="about-grid">
-        <div class="about-key">Application</div>
-        <div class="about-val">GeminiDesk <span id="about_version"></span></div>
-        <div class="about-key">Engine</div>
-        <div class="about-val">Rust + tao + wry (Native System WebView)</div>
-        <div class="about-key">WebView Runtime</div>
-        <div class="about-val" id="webview_version">—</div>
-      </div>
-      <div class="disclaimer">
-        GeminiDesk is an unofficial, independent desktop client for Google Gemini. It is not affiliated with, endorsed by, or sponsored by Google. All Google accounts, authentication, conversations, and subscriptions are handled directly by Google.
-      </div>
-    </section>
+      <!-- QUICK CHAT -->
+      <section class="panel" id="panel-quick_chat">
+        <h1 class="panel-title">Quick Chat</h1>
+        <p class="panel-subtitle">Spotlight-style floating overlay sharing your active Gemini session.</p>
+
+        <div class="group-label">Placement &amp; Size</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Display position</div>
+              <div class="row-desc">Always opens on the monitor with your mouse cursor.</div>
+            </div>
+            <select id="quick_chat_position">
+              <option value="top_center">Top center</option>
+              <option value="center">Screen center</option>
+              <option value="top_right">Top right</option>
+              <option value="bottom_right">Bottom right</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Size preset</div>
+            </div>
+            <div class="segmented" id="qc-size-seg">
+              <button class="seg-btn" data-w="720" data-h="540">Compact</button>
+              <button class="seg-btn" data-w="780" data-h="580">Standard</button>
+              <button class="seg-btn" data-w="900" data-h="640">Spacious</button>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Custom dimensions (logical px)</div>
+            </div>
+            <div class="row-right">
+              <input type="number" class="num-input" id="quick_chat_width" min="520" max="1400" step="10" />
+              <span style="color:var(--text-tertiary);">×</span>
+              <input type="number" class="num-input" id="quick_chat_height" min="420" max="1000" step="10" />
+            </div>
+          </div>
+        </div>
+
+        <div class="group-label">Behavior</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Dismiss when clicking outside</div>
+              <div class="row-desc">Press Esc to hide, or Ctrl+Shift+E to expand into the full window.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="quick_chat_hide_on_blur" /><span class="track"></span></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- PRODUCTIVITY -->
+      <section class="panel" id="panel-productivity">
+        <h1 class="panel-title">Productivity</h1>
+        <p class="panel-subtitle">On-demand desktop workflows. Zero background monitoring.</p>
+
+        <div class="group-label">Selection &amp; Screen Capture</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Ask Gemini with Selection</div>
+              <div class="row-desc">Uses Windows UI Automation on shortcut press. Never reads password fields.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="ask_selection_enabled" /><span class="track"></span></label>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Non-destructive clipboard fallback</div>
+              <div class="row-desc">For apps without UI Automation support; preserves and restores prior clipboard.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="ask_selection_clipboard_fallback" /><span class="track"></span></label>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Screenshot to Gemini</div>
+              <div class="row-desc">Enable global region capture shortcut. Captures only when triggered.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="screenshot_enabled" /><span class="track"></span></label>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Keep captured screenshot on clipboard</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="screenshot_copy_to_clipboard" /><span class="track"></span></label>
+          </div>
+        </div>
+
+        <div class="group-label">Clipboard Actions</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Enable Clipboard Actions shortcut</div>
+              <div class="row-desc">Reads clipboard only when invoked. Never stores clipboard history.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="clipboard_actions_enabled" /><span class="track"></span></label>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Maximum text length (characters)</div>
+            </div>
+            <input type="number" class="num-input" id="clipboard_max_chars" min="1000" max="100000" step="1000" style="width:94px;" />
+          </div>
+          <div class="row row-stack">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div>
+                <div class="row-label">Prompt templates</div>
+                <div class="row-desc">Use <code>{{text}}</code> where clipboard content is inserted.</div>
+              </div>
+              <div class="row-right">
+                <button class="btn" id="reset_templates">Reset</button>
+                <button class="btn" id="add_template">+ Add</button>
+                <button class="btn btn-primary" id="save_templates">Save</button>
+              </div>
+            </div>
+            <div class="template-list" id="template-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PERFORMANCE -->
+      <section class="panel" id="panel-performance">
+        <h1 class="panel-title">Performance</h1>
+        <p class="panel-subtitle">Real WebView2 memory lifecycle and live process-tree telemetry.</p>
+
+        <div class="group-label">Resource Profile</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Performance mode</div>
+              <div class="row-desc" id="perf-mode-desc">Lowers WebView2 memory when hidden in tray while keeping sessions instant.</div>
+            </div>
+            <div class="segmented" id="perf-seg">
+              <button class="seg-btn" data-val="efficiency">Efficiency</button>
+              <button class="seg-btn" data-val="balanced">Balanced</button>
+              <button class="seg-btn" data-val="performance">Performance</button>
+            </div>
+          </div>
+          <div class="row" id="row-suspend-delay">
+            <div class="row-text">
+              <div class="row-label">Idle suspension delay (Efficiency mode)</div>
+              <div class="row-desc">Calls WebView2 TrySuspend after remaining hidden in tray.</div>
+            </div>
+            <div class="row-right">
+              <input type="number" class="num-input" id="efficiency_suspend_delay_secs" min="15" max="600" step="15" />
+              <span style="font-size:12px;color:var(--text-secondary);">sec</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="group-label">Live Process Tree (Active Only While Viewed)</div>
+        <div class="metrics-grid">
+          <div class="metric-cell">
+            <div class="metric-k">Rust Shell Private RAM</div>
+            <div class="metric-v" id="m-rust-ram">—</div>
+            <div class="metric-sub" id="m-rust-ws">Working set —</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-k">Full Process Tree RAM</div>
+            <div class="metric-v" id="m-tree-ram">—</div>
+            <div class="metric-sub" id="m-tree-procs">— processes</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-k">Process Tree CPU</div>
+            <div class="metric-v" id="m-cpu">—</div>
+            <div class="metric-sub" id="m-wv-state">Normal memory target</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-k">WebView2 Runtime</div>
+            <div class="metric-v" style="font-size:14px;" id="m-runtime">—</div>
+            <div class="metric-sub">Single shared renderer</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PRIVACY -->
+      <section class="panel" id="panel-privacy">
+        <h1 class="panel-title">Privacy</h1>
+        <p class="panel-subtitle">Local storage boundaries and strict zero-telemetry architecture.</p>
+
+        <div class="group-label">Local Data</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">WebView cache (<span id="cache_size">—</span>)</div>
+              <div class="row-desc">Removes transient HTTP, code, and shader caches without signing out.</div>
+            </div>
+            <button class="btn" id="clear_cache_btn">Clear Cache</button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">WebView profile folder</div>
+              <div class="mono-path" id="profile_path">—</div>
+            </div>
+            <button class="btn" id="open_profile_btn">Open Folder</button>
+          </div>
+        </div>
+
+        <div class="group-label">Security Guarantees</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Direct Google authentication</div>
+              <div class="row-desc">GeminiDesk never intercepts passwords, extracts cookies, or transmits tokens to third-party servers.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">On-demand capture only</div>
+              <div class="row-desc">Clipboard, text selection, and screenshots are never monitored in the background, never logged, and never auto-submitted.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ABOUT -->
+      <section class="panel" id="panel-about">
+        <div class="about-hero">
+          <div class="about-emblem">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2.5C12.8 8.2 15.8 11.2 21.5 12C15.8 12.8 12.8 15.8 12 21.5C11.2 15.8 8.2 12.8 2.5 12C8.2 11.2 11.2 8.2 12 2.5Z" fill="currentColor"/>
+            </svg>
+          </div>
+          <div>
+            <div class="about-name">GeminiDesk</div>
+            <div class="about-meta">Unofficial native desktop client for Google Gemini</div>
+          </div>
+        </div>
+
+        <div class="kv-row"><span class="kv-k">Version</span><span class="kv-v" id="about_version">0.3.0</span></div>
+        <div class="kv-row"><span class="kv-k">Core Stack</span><span class="kv-v">Rust · tao · wry</span></div>
+        <div class="kv-row"><span class="kv-k">WebView Runtime</span><span class="kv-v" id="about_webview">—</span></div>
+        <div class="kv-row"><span class="kv-k">License</span><span class="kv-v">MIT OR Apache-2.0</span></div>
+
+        <div class="legal-note">
+          GeminiDesk is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Google LLC. Google accounts, subscriptions, models, and conversation history remain entirely managed by Google.
+        </div>
+      </section>
+    </main>
   </div>
 
   <div class="toast" id="toast"></div>
 
 <script>
   const $ = (id) => document.getElementById(id);
+  let stateCache = null;
+  let activeTab = 'general';
+  let perfTimer = null;
   let toastTimer = null;
+
+  const PERF_DESCRIPTIONS = {
+    efficiency: 'Lowers WebView2 memory in tray and calls TrySuspend after the idle delay.',
+    balanced: 'Lowers WebView2 memory when hidden in tray while keeping sessions instant.',
+    performance: 'Keeps WebView2 at normal memory target at all times for maximum responsiveness.',
+  };
+
+  function post(payload) {
+    window.ipc.postMessage(JSON.stringify(payload));
+  }
 
   function showToast(msg) {
     const el = $('toast');
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2100);
   }
 
   function formatBytes(bytes) {
     if (!bytes || bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    let v = bytes;
+    let i = 0, v = bytes;
     while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-    return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+    return `${v.toFixed(i >= 2 ? 1 : 0)} ${units[i]}`;
   }
 
-  function post(payload) {
-    window.ipc.postMessage(JSON.stringify(payload));
+  function setTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('.nav-item').forEach((btn) => {
+      const on = btn.dataset.tab === tab;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.panel').forEach((p) => {
+      p.classList.toggle('active', p.id === `panel-${tab}`);
+    });
+
+    // Bounded telemetry: sample ONLY while Performance section is visible.
+    clearInterval(perfTimer);
+    perfTimer = null;
+    if (tab === 'performance') {
+      post({ type: 'request_metrics' });
+      perfTimer = setInterval(() => {
+        if (activeTab === 'performance') post({ type: 'request_metrics' });
+      }, 2000);
+    }
+  }
+
+  document.querySelectorAll('.nav-item').forEach((btn) => {
+    btn.addEventListener('click', () => setTab(btn.dataset.tab));
+  });
+
+  function setSegmented(containerId, val) {
+    $(containerId).querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.val === val);
+    });
+  }
+
+  function renderTemplates(templates) {
+    const host = $('template-list');
+    host.innerHTML = '';
+    templates.forEach((tpl, idx) => {
+      const row = document.createElement('div');
+      row.className = 'template-item';
+      row.innerHTML = `
+        <input type="text" data-tpl-label="${idx}" placeholder="Label" />
+        <textarea data-tpl-prompt="${idx}" placeholder="Prompt using {{text}}"></textarea>
+        <button class="btn btn-ghost btn-danger" data-tpl-del="${idx}" title="Remove">×</button>
+      `;
+      row.querySelector(`[data-tpl-label="${idx}"]`).value = tpl.label;
+      row.querySelector(`[data-tpl-prompt="${idx}"]`).value = tpl.prompt;
+      row.querySelector(`[data-tpl-del="${idx}"]`).addEventListener('click', () => {
+        const list = collectTemplates();
+        list.splice(idx, 1);
+        renderTemplates(list);
+      });
+      host.appendChild(row);
+    });
+  }
+
+  function collectTemplates() {
+    const items = [];
+    $('template-list').querySelectorAll('.template-item').forEach((el, idx) => {
+      const label = el.querySelector('input').value.trim();
+      const prompt = el.querySelector('textarea').value.trim();
+      if (label && prompt) {
+        items.push({
+          id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_') || `tpl_${idx}`,
+          label,
+          prompt,
+        });
+      }
+    });
+    return items;
   }
 
   function readFormConfig() {
+    const activeTheme = $('theme-seg').querySelector('.seg-btn.active')?.dataset.val || 'system';
+    const activePerf = $('perf-seg').querySelector('.seg-btn.active')?.dataset.val || 'balanced';
     return {
       launch_at_startup: $('launch_at_startup').checked,
       minimize_to_tray: $('minimize_to_tray').checked,
       close_behavior: $('close_behavior').value,
+      theme: activeTheme,
+
       quick_chat_shortcut: $('quick_chat_shortcut').value.trim(),
       full_window_shortcut: $('full_window_shortcut').value.trim(),
+      companion_shortcut: $('companion_shortcut').value.trim(),
+      ask_selection_shortcut: $('ask_selection_shortcut').value.trim(),
+      screenshot_shortcut: $('screenshot_shortcut').value.trim(),
+      clipboard_actions_shortcut: $('clipboard_actions_shortcut').value.trim(),
+
       quick_chat_hide_on_blur: $('quick_chat_hide_on_blur').checked,
-      theme: $('theme').value,
-      reduce_memory_when_hidden: $('reduce_memory_when_hidden').checked,
+      quick_chat_width: parseInt($('quick_chat_width').value, 10) || 780,
+      quick_chat_height: parseInt($('quick_chat_height').value, 10) || 580,
+      quick_chat_position: $('quick_chat_position').value,
+
+      companion_always_on_top: $('companion_always_on_top').checked,
+      companion_opacity: parseInt($('companion_opacity').value, 10) || 100,
+      companion_snap_to_edges: $('companion_snap_to_edges').checked,
+
+      ask_selection_enabled: $('ask_selection_enabled').checked,
+      ask_selection_clipboard_fallback: $('ask_selection_clipboard_fallback').checked,
+      screenshot_enabled: $('screenshot_enabled').checked,
+      screenshot_copy_to_clipboard: $('screenshot_copy_to_clipboard').checked,
+      clipboard_actions_enabled: $('clipboard_actions_enabled').checked,
+      clipboard_max_chars: parseInt($('clipboard_max_chars').value, 10) || 24000,
+      clipboard_templates: collectTemplates(),
+
+      performance_mode: activePerf,
+      reduce_memory_when_hidden: activePerf !== 'performance',
+      efficiency_suspend_delay_secs: parseInt($('efficiency_suspend_delay_secs').value, 10) || 60,
     };
   }
 
-  function saveNow(feedback) {
+  function saveNow() {
     post({ type: 'save_config', config: readFormConfig() });
-    if (feedback) showToast(feedback);
+  }
+
+  function updateShortcutIndicator(key, st, optInSubId) {
+    const dot = $(`dot-${key}`);
+    const err = $(`err-${key}`);
+    dot.className = 'status-dot';
+    if (st.error) {
+      dot.classList.add('warn');
+      err.textContent = st.error;
+      err.hidden = false;
+    } else {
+      err.hidden = true;
+      if (st.registered) dot.classList.add('ok');
+    }
+    if (optInSubId) {
+      const sub = $(optInSubId);
+      sub.textContent = st.enabled
+        ? (st.registered ? 'Active global shortcut.' : 'Enabled — enter a valid shortcut.')
+        : 'Disabled — enable in Productivity to register.';
+    }
   }
 
   window.__geminidesk_apply_state = function(state) {
+    stateCache = state;
     document.documentElement.setAttribute('data-theme', state.effective_dark ? 'dark' : 'light');
 
     const c = state.config;
     $('launch_at_startup').checked = !!c.launch_at_startup;
     $('minimize_to_tray').checked = !!c.minimize_to_tray;
     $('close_behavior').value = c.close_behavior;
+    setSegmented('theme-seg', c.theme);
+
     $('quick_chat_shortcut').value = c.quick_chat_shortcut || '';
     $('full_window_shortcut').value = c.full_window_shortcut || '';
-    $('quick_chat_hide_on_blur').checked = !!c.quick_chat_hide_on_blur;
-    $('theme').value = c.theme;
-    $('reduce_memory_when_hidden').checked = !!c.reduce_memory_when_hidden;
+    $('companion_shortcut').value = c.companion_shortcut || '';
+    $('ask_selection_shortcut').value = c.ask_selection_shortcut || '';
+    $('screenshot_shortcut').value = c.screenshot_shortcut || '';
+    $('clipboard_actions_shortcut').value = c.clipboard_actions_shortcut || '';
 
-    $('version-badge').textContent = 'v' + state.version;
-    $('about_version').textContent = 'v' + state.version;
-    $('webview_version').textContent = state.webview_version;
+    $('quick_chat_hide_on_blur').checked = !!c.quick_chat_hide_on_blur;
+    $('quick_chat_width').value = c.quick_chat_width;
+    $('quick_chat_height').value = c.quick_chat_height;
+    $('quick_chat_position').value = c.quick_chat_position;
+    $('qc-size-seg').querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle(
+        'active',
+        parseInt(b.dataset.w, 10) === c.quick_chat_width &&
+        parseInt(b.dataset.h, 10) === c.quick_chat_height
+      );
+    });
+
+    $('companion_always_on_top').checked = !!c.companion_always_on_top;
+    $('companion_opacity').value = c.companion_opacity;
+    $('companion_opacity_val').textContent = `${c.companion_opacity}%`;
+    $('companion_snap_to_edges').checked = !!c.companion_snap_to_edges;
+
+    $('ask_selection_enabled').checked = !!c.ask_selection_enabled;
+    $('ask_selection_clipboard_fallback').checked = !!c.ask_selection_clipboard_fallback;
+    $('screenshot_enabled').checked = !!c.screenshot_enabled;
+    $('screenshot_copy_to_clipboard').checked = !!c.screenshot_copy_to_clipboard;
+    $('clipboard_actions_enabled').checked = !!c.clipboard_actions_enabled;
+    $('clipboard_max_chars').value = c.clipboard_max_chars;
+    renderTemplates(c.clipboard_templates || []);
+
+    setSegmented('perf-seg', c.performance_mode);
+    $('perf-mode-desc').textContent = PERF_DESCRIPTIONS[c.performance_mode] || '';
+    $('efficiency_suspend_delay_secs').value = c.efficiency_suspend_delay_secs;
+    $('row-suspend-delay').style.opacity = c.performance_mode === 'efficiency' ? '1' : '0.45';
+
+    updateShortcutIndicator('quick_chat', state.hotkeys.quick_chat);
+    updateShortcutIndicator('full_window', state.hotkeys.full_window);
+    updateShortcutIndicator('companion', state.hotkeys.companion);
+    updateShortcutIndicator('ask_selection', state.hotkeys.ask_selection, 'sub-ask_selection');
+    updateShortcutIndicator('screenshot', state.hotkeys.screenshot, 'sub-screenshot');
+    updateShortcutIndicator('clipboard_actions', state.hotkeys.clipboard_actions, 'sub-clipboard_actions');
+
+    $('sidebar-ver').textContent = `v${state.version}`;
+    $('about_version').textContent = state.version;
+    $('about_webview').textContent = state.webview_version;
+    $('m-runtime').textContent = state.webview_version;
     $('profile_path').textContent = state.profile_path;
     $('cache_size').textContent = formatBytes(state.cache_size_bytes);
 
-    const qs = $('quick_chat_status');
-    if (state.hotkeys.quick_chat_error) {
-      qs.className = 'status-line status-warn';
-      qs.textContent = 'Warning: ' + state.hotkeys.quick_chat_error;
-    } else if (state.hotkeys.quick_chat_registered) {
-      qs.className = 'status-line status-ok';
-      qs.textContent = 'Active global shortcut';
-    } else {
-      qs.className = 'status-line';
-      qs.textContent = 'Disabled';
+    if (state.initial_tab && state.initial_tab !== activeTab) {
+      setTab(state.initial_tab);
     }
-
-    const fs = $('full_window_status');
-    if (state.hotkeys.full_window_error) {
-      fs.className = 'status-line status-warn';
-      fs.textContent = 'Warning: ' + state.hotkeys.full_window_error;
-    } else if (state.hotkeys.full_window_registered) {
-      fs.className = 'status-line status-ok';
-      fs.textContent = 'Active global shortcut';
-    } else {
-      fs.className = 'status-line';
-      fs.textContent = 'Disabled';
-    }
-
     if (state.toast) showToast(state.toast);
   };
 
+  window.__geminidesk_apply_metrics = function(m) {
+    $('m-rust-ram').textContent = formatBytes(m.rust_private_bytes);
+    $('m-rust-ws').textContent = `Working set ${formatBytes(m.rust_working_set_bytes)}`;
+    $('m-tree-ram').textContent = formatBytes(m.total_private_bytes);
+    $('m-tree-procs').textContent = `${m.total_process_count} processes (${m.webview_process_count} WebView2)`;
+    $('m-cpu').textContent = `${m.cpu_percent.toFixed(2)}%`;
+    $('m-wv-state').textContent = m.webview_suspended
+      ? 'Suspended in background'
+      : (m.webview_low_memory ? 'Low memory target active' : 'Normal memory target');
+    $('m-runtime').textContent = m.runtime_version;
+  };
+
+  // Immediate save bindings
   for (const id of [
-    'launch_at_startup',
-    'minimize_to_tray',
-    'close_behavior',
-    'quick_chat_hide_on_blur',
-    'theme',
-    'reduce_memory_when_hidden',
+    'launch_at_startup', 'minimize_to_tray', 'close_behavior',
+    'quick_chat_hide_on_blur', 'quick_chat_position', 'quick_chat_width', 'quick_chat_height',
+    'companion_always_on_top', 'companion_snap_to_edges',
+    'ask_selection_enabled', 'ask_selection_clipboard_fallback',
+    'screenshot_enabled', 'screenshot_copy_to_clipboard',
+    'clipboard_actions_enabled', 'clipboard_max_chars', 'efficiency_suspend_delay_secs',
   ]) {
-    $(id).addEventListener('change', () => saveNow('Settings saved'));
+    $(id).addEventListener('change', saveNow);
   }
 
-  $('apply_shortcuts').addEventListener('click', () => saveNow('Shortcuts updated'));
-  for (const id of ['quick_chat_shortcut', 'full_window_shortcut']) {
-    $(id).addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') saveNow('Shortcuts updated');
-    });
-  }
+  $('companion_opacity').addEventListener('input', (e) => {
+    $('companion_opacity_val').textContent = `${e.target.value}%`;
+  });
+  $('companion_opacity').addEventListener('change', saveNow);
 
-  document.querySelectorAll('.btn-chip').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const target = $(btn.dataset.target);
-      target.value = btn.dataset.val;
-      saveNow('Shortcut updated to ' + btn.dataset.val);
+  $('theme-seg').querySelectorAll('.seg-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      setSegmented('theme-seg', b.dataset.val);
+      saveNow();
     });
   });
 
-  $('clear_cache_btn').addEventListener('click', () => {
-    post({ type: 'clear_cache' });
+  $('perf-seg').querySelectorAll('.seg-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      setSegmented('perf-seg', b.dataset.val);
+      saveNow();
+    });
   });
 
-  $('open_profile_btn').addEventListener('click', () => {
-    post({ type: 'open_profile_folder' });
+  $('qc-size-seg').querySelectorAll('.seg-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      $('quick_chat_width').value = b.dataset.w;
+      $('quick_chat_height').value = b.dataset.h;
+      saveNow();
+    });
   });
 
+  $('apply_shortcuts').addEventListener('click', saveNow);
+  $('reset_shortcuts').addEventListener('click', () => {
+    $('quick_chat_shortcut').value = 'Alt+Space';
+    $('full_window_shortcut').value = 'Alt+Shift+Space';
+    $('companion_shortcut').value = 'Alt+Shift+G';
+    $('ask_selection_shortcut').value = 'Alt+Shift+A';
+    $('screenshot_shortcut').value = 'Alt+Shift+S';
+    $('clipboard_actions_shortcut').value = 'Alt+Shift+C';
+    saveNow();
+  });
+
+  $('add_template').addEventListener('click', () => {
+    const list = collectTemplates();
+    list.push({ id: `custom_${Date.now()}`, label: 'Custom action', prompt: 'Process this:\n\n{{text}}' });
+    renderTemplates(list);
+  });
+  $('save_templates').addEventListener('click', saveNow);
+  $('reset_templates').addEventListener('click', () => post({ type: 'reset_templates' }));
+
+  $('clear_cache_btn').addEventListener('click', () => post({ type: 'clear_cache' }));
+  $('open_profile_btn').addEventListener('click', () => post({ type: 'open_profile_folder' }));
+
+  // Keyboard navigation
+  const TAB_ORDER = ['general', 'appearance', 'shortcuts', 'quick_chat', 'productivity', 'performance', 'privacy', 'about'];
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') post({ type: 'close' });
+    if (e.key === 'Escape') {
+      post({ type: 'close' });
+    } else if (e.altKey && e.key >= '1' && e.key <= '8') {
+      e.preventDefault();
+      setTab(TAB_ORDER[parseInt(e.key, 10) - 1]);
+    }
   });
 
   post({ type: 'ready' });
