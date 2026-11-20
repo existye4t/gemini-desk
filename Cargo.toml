@@ -1,0 +1,22 @@
+[package]
+name = "gemini-desk"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight, high-performance unofficial Rust desktop client for Google Gemini"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+directories = "6.0"
+open = "5.4"
+tao = "0.37"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.5"
+wry = "0.57"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = "s"
+strip = true
+panic = "abort"
