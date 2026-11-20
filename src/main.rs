@@ -13,6 +13,7 @@ mod platform;
 mod productivity;
 mod settings_window;
 mod tray;
+mod ui_assets;
 mod webview;
 
 use tracing::error;
