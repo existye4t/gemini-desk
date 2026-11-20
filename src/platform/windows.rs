@@ -6,8 +6,8 @@ use tao::platform::windows::WindowExtWindows;
 use tao::window::Window;
 use tracing::warn;
 use windows::Win32::Foundation::{
-    COLORREF, CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT,
-    POINT, WPARAM,
+    COLORREF, CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM,
+    LRESULT, POINT, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR,
@@ -15,8 +15,10 @@ use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow,
+    DEFAULT_GUI_FONT, GetMonitorInfoW, GetStockObject, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromPoint, MonitorFromWindow,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_DWORD, REG_SZ, RegCloseKey,
     RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
@@ -25,15 +27,22 @@ use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId, GetCu
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, BringWindowToTop, FindWindowW, GA_ROOTOWNER, GW_OWNER, GWL_EXSTYLE,
-    GetAncestor, GetCursorPos, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
-    GetWindowThreadProcessId, IsChild, LWA_ALPHA, PostMessageW, SW_RESTORE, SW_SHOW,
-    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, ShowWindow, WM_APP,
-    WS_EX_LAYERED,
+    AllowSetForegroundWindow, BS_PUSHBUTTON, BringWindowToTop, CreateWindowExW, FindWindowW,
+    GA_ROOTOWNER, GW_OWNER, GWL_EXSTYLE, GetAncestor, GetCursorPos, GetForegroundWindow, GetWindow,
+    GetWindowLongPtrW, GetWindowThreadProcessId, HMENU, IsChild, LWA_ALPHA, MoveWindow,
+    PostMessageW, SW_HIDE, SW_RESTORE, SW_SHOW, SetForegroundWindow, SetLayeredWindowAttributes,
+    SetWindowLongPtrW, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_COMMAND, WM_SETFONT, WS_CHILD, WS_EX_LAYERED,
 };
 use windows::core::PCWSTR;
 
+use crate::auth::AuthNavBarState;
+
 use super::{ActivationTarget, WorkArea};
+
+pub const CMD_AUTH_BACK: usize = 0x5101;
+pub const CMD_AUTH_CANCEL: usize = 0x5102;
+pub const CMD_AUTH_RETRY: usize = 0x5103;
 
 /// Custom WM_APP messages posted by a secondary launch to wake the primary instance.
 pub const WM_ACTIVATE_MAIN: u32 = WM_APP + 0x101;
@@ -507,6 +516,20 @@ unsafe extern "system" fn activation_subclass_proc(
                 let _ = proxy.send_event(crate::app::AppEvent::InvokeScreenshot);
                 return LRESULT(0);
             }
+            WM_COMMAND => {
+                let cmd_id = wparam.0 & 0xFFFF;
+                match cmd_id {
+                    CMD_AUTH_BACK | CMD_AUTH_CANCEL => {
+                        let _ = proxy.send_event(crate::app::AppEvent::CancelAuthFlow);
+                        return LRESULT(0);
+                    }
+                    CMD_AUTH_RETRY => {
+                        let _ = proxy.send_event(crate::app::AppEvent::RetryAuthFlow);
+                        return LRESULT(0);
+                    }
+                    _ => {}
+                }
+            }
             WM_NCDESTROY => unsafe {
                 let _ = RemoveWindowSubclass(hwnd, Some(activation_subclass_proc), uid_subclass);
                 drop(Box::from_raw(
@@ -518,4 +541,198 @@ unsafe extern "system" fn activation_subclass_proc(
     }
 
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// Compact native Win32 navigation bar hosted at the top of the Main Window strictly while
+/// a Google account-management or sign-in flow is active.
+pub struct AuthNavHeader {
+    parent_hwnd: HWND,
+    back_btn: HWND,
+    title_lbl: HWND,
+    retry_btn: HWND,
+    cancel_btn: HWND,
+    visible: bool,
+    is_error: bool,
+    inset_px: i32,
+}
+
+impl AuthNavHeader {
+    pub fn attach(
+        window: &Window,
+        _dark: bool,
+        _proxy: tao::event_loop::EventLoopProxy<crate::app::AppEvent>,
+    ) -> Option<Self> {
+        let parent_hwnd = hwnd_of(window);
+        unsafe {
+            let hinstance: HINSTANCE = GetModuleHandleW(None).unwrap_or_default().into();
+            let font = GetStockObject(DEFAULT_GUI_FONT);
+            let btn_cls = to_wide_null("BUTTON");
+            let lbl_cls = to_wide_null("STATIC");
+            let back_txt = to_wide_null("<- Back to Gemini");
+            let title_txt = to_wide_null("Switch Google Account");
+            let retry_txt = to_wide_null("Retry");
+            let cancel_txt = to_wide_null("Cancel");
+
+            let btn_style = WINDOW_STYLE(WS_CHILD.0 | BS_PUSHBUTTON as u32);
+            let lbl_style = WS_CHILD;
+
+            let back_btn = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(btn_cls.as_ptr()),
+                PCWSTR(back_txt.as_ptr()),
+                btn_style,
+                8,
+                6,
+                136,
+                26,
+                Some(parent_hwnd),
+                Some(HMENU(CMD_AUTH_BACK as *mut _)),
+                Some(hinstance),
+                None,
+            )
+            .ok()?;
+
+            let title_lbl = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(lbl_cls.as_ptr()),
+                PCWSTR(title_txt.as_ptr()),
+                lbl_style,
+                156,
+                10,
+                320,
+                20,
+                Some(parent_hwnd),
+                None,
+                Some(hinstance),
+                None,
+            )
+            .ok()?;
+
+            let retry_btn = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(btn_cls.as_ptr()),
+                PCWSTR(retry_txt.as_ptr()),
+                btn_style,
+                0,
+                6,
+                76,
+                26,
+                Some(parent_hwnd),
+                Some(HMENU(CMD_AUTH_RETRY as *mut _)),
+                Some(hinstance),
+                None,
+            )
+            .ok()?;
+
+            let cancel_btn = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(btn_cls.as_ptr()),
+                PCWSTR(cancel_txt.as_ptr()),
+                btn_style,
+                0,
+                6,
+                84,
+                26,
+                Some(parent_hwnd),
+                Some(HMENU(CMD_AUTH_CANCEL as *mut _)),
+                Some(hinstance),
+                None,
+            )
+            .ok()?;
+
+            for h in [back_btn, title_lbl, retry_btn, cancel_btn] {
+                let _ = PostMessageW(Some(h), WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+                let _ = ShowWindow(h, SW_HIDE);
+            }
+
+            Some(Self {
+                parent_hwnd,
+                back_btn,
+                title_lbl,
+                retry_btn,
+                cancel_btn,
+                visible: false,
+                is_error: false,
+                inset_px: 0,
+            })
+        }
+    }
+
+    pub fn apply_theme(&self, _dark: bool) {}
+
+    pub fn apply_state(&mut self, window: &Window, state: &AuthNavBarState) {
+        self.visible = state.visible;
+        self.is_error = state.is_error;
+        if !state.visible {
+            self.inset_px = 0;
+            unsafe {
+                for h in [
+                    self.back_btn,
+                    self.title_lbl,
+                    self.retry_btn,
+                    self.cancel_btn,
+                ] {
+                    let _ = ShowWindow(h, SW_HIDE);
+                }
+            }
+            return;
+        }
+
+        let scale = window.scale_factor().clamp(1.0, 4.0);
+        self.inset_px = (38.0 * scale).round() as i32;
+        let title_w = to_wide_null(&state.title);
+        let cancel_w = to_wide_null(&state.cancel_label);
+        unsafe {
+            let _ = SetWindowTextW(self.title_lbl, PCWSTR(title_w.as_ptr()));
+            let _ = SetWindowTextW(self.cancel_btn, PCWSTR(cancel_w.as_ptr()));
+            let _ = ShowWindow(self.back_btn, SW_SHOW);
+            let _ = ShowWindow(self.title_lbl, SW_SHOW);
+            let _ = ShowWindow(
+                self.retry_btn,
+                if state.is_error { SW_SHOW } else { SW_HIDE },
+            );
+            let _ = ShowWindow(
+                self.cancel_btn,
+                if state.is_error { SW_HIDE } else { SW_SHOW },
+            );
+        }
+        self.layout(window);
+    }
+
+    pub fn layout(&self, window: &Window) {
+        if !self.visible {
+            return;
+        }
+        let _ = self.parent_hwnd;
+        let scale = window.scale_factor().clamp(1.0, 4.0);
+        let bar_h = (38.0 * scale).round() as i32;
+        let pad = (8.0 * scale).round() as i32;
+        let btn_h = (26.0 * scale).round() as i32;
+        let btn_y = (bar_h - btn_h) / 2;
+        let back_w = (138.0 * scale).round() as i32;
+        let right_w = (84.0 * scale).round() as i32;
+        let total_w = window.inner_size().width as i32;
+
+        let title_x = pad + back_w + pad;
+        let title_w = (total_w - title_x - right_w - pad * 2).max(80);
+        let right_x = (total_w - right_w - pad).max(title_x + 20);
+
+        unsafe {
+            let _ = MoveWindow(self.back_btn, pad, btn_y, back_w, btn_h, true);
+            let _ = MoveWindow(
+                self.title_lbl,
+                title_x,
+                btn_y + (4.0 * scale).round() as i32,
+                title_w,
+                btn_h,
+                true,
+            );
+            let _ = MoveWindow(self.retry_btn, right_x, btn_y, right_w, btn_h, true);
+            let _ = MoveWindow(self.cancel_btn, right_x, btn_y, right_w, btn_h, true);
+        }
+    }
+
+    pub fn top_inset_px(&self) -> i32 {
+        self.inset_px
+    }
 }

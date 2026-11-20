@@ -45,6 +45,10 @@ pub const GOOGLE_SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?p
 pub const GOOGLE_SIGN_OUT_URL: &str =
     "https://accounts.google.com/Logout?continue=https%3A%2F%2Fgemini.google.com%2Fapp";
 
+/// Official Google Account management URL.
+#[allow(dead_code)]
+pub const GOOGLE_ACCOUNT_HOME_URL: &str = "https://myaccount.google.com/";
+
 /// Supported in-app Google authentication actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +78,51 @@ impl SignInFlow {
             Self::SignOut => "Signing out of Google...",
         }
     }
+
+    pub fn header_title(self) -> &'static str {
+        match self {
+            Self::SignIn => "Sign in with Google",
+            Self::AccountChooser => "Switch Google Account",
+            Self::AddAccount => "Add Google Account",
+            Self::SignOut => "Sign Out of Google",
+        }
+    }
+}
+
+/// Visual state for the compact native navigation header shown while an account-management
+/// flow is active inside the main GeminiDesk window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AuthNavBarState {
+    pub visible: bool,
+    pub title: String,
+    pub subtitle: String,
+    pub can_go_back: bool,
+    pub is_error: bool,
+    pub cancel_label: String,
+}
+
+impl Default for AuthNavBarState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            title: String::new(),
+            subtitle: String::new(),
+            can_go_back: false,
+            is_error: false,
+            cancel_label: "Cancel".to_string(),
+        }
+    }
+}
+
+/// Navigation strategy when returning from an account-management page to Gemini.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthReturnAction {
+    /// Step back using WebView history (avoids reloading Gemini when cached), with validated fallback URL.
+    HistoryBack { fallback_url: String },
+    /// Navigate directly to the preserved Gemini workspace URL (used after multi-step auth navigation).
+    NavigateTo(String),
+    /// Already on the Gemini workspace; only re-verify the active session honestly.
+    AlreadyInWorkspace,
 }
 
 /// Structured error codes for authentication validation and embedded browser challenges.
@@ -104,6 +153,11 @@ pub enum AuthState {
         flow: SignInFlow,
         stage: String,
     },
+    /// Transitional state while returning to Gemini after canceling/stepping back from an
+    /// account flow; prevents pretending an already-completed Google account switch was undone.
+    Returning {
+        message: String,
+    },
     AuthError {
         code: AuthErrorCode,
         message: String,
@@ -116,6 +170,7 @@ pub enum AuthUrlKind {
     GeminiWorkspace { account_index: Option<u8> },
     GoogleSignIn,
     GoogleAccountChooser,
+    GoogleAccountManagement,
     GoogleSsoHandshake,
     GoogleSignOut,
     GoogleAuthBlocked,
@@ -241,7 +296,34 @@ pub fn classify_auth_url(uri: &str) -> AuthUrlKind {
         return AuthUrlKind::GoogleSignIn;
     }
 
+    if host.starts_with("myaccount.google.")
+        || host.starts_with("gds.google.")
+        || host.starts_with("consent.google.")
+    {
+        return AuthUrlKind::GoogleAccountManagement;
+    }
+
     AuthUrlKind::OtherAllowed
+}
+
+/// Validates that a saved return URL strictly targets `https://gemini.google.com/...`
+/// without embedded credentials.
+pub fn sanitize_gemini_return_url(uri: &str) -> Option<String> {
+    let parsed = Url::parse(uri).ok()?;
+    if parsed.scheme() != "https" {
+        return None;
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    let host = parsed
+        .host_str()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host != "gemini.google.com" {
+        return None;
+    }
+    Some(parsed.to_string())
 }
 
 fn parse_multi_account_index(lower_path: &str) -> Option<u8> {
@@ -302,14 +384,20 @@ pub fn inspect_profile_persistence(webview_data_dir: &Path) -> ProfilePersistenc
 }
 
 /// Stateful controller coordinating in-app Google authentication state, flow generations,
-/// cancellation, and probe correlation.
+/// navigation header state, cancellation, and probe correlation.
 #[derive(Debug)]
 pub struct AuthController {
     state: AuthState,
     previous_stable_state: AuthState,
     flow_generation: u64,
     active_flow: Option<SignInFlow>,
+    last_flow: Option<SignInFlow>,
     last_account_index: Option<u8>,
+    last_gemini_url: Option<String>,
+    last_observed_auth_url: Option<String>,
+    auth_nav_depth: usize,
+    on_auth_page: bool,
+    on_account_management_page: bool,
 }
 
 impl AuthController {
@@ -319,7 +407,13 @@ impl AuthController {
             previous_stable_state: AuthState::SignedOut,
             flow_generation: 1,
             active_flow: None,
+            last_flow: None,
             last_account_index: None,
+            last_gemini_url: None,
+            last_observed_auth_url: None,
+            auth_nav_depth: 0,
+            on_auth_page: false,
+            on_account_management_page: false,
         }
     }
 
@@ -329,6 +423,72 @@ impl AuthController {
 
     pub fn flow_generation(&self) -> u64 {
         self.flow_generation
+    }
+
+    /// Returns the strictly validated Gemini workspace URL to return to after canceling or
+    /// stepping back from an account-management flow.
+    pub fn return_gemini_url(&self) -> String {
+        self.last_gemini_url
+            .clone()
+            .unwrap_or_else(|| GEMINI_APP_URL.to_string())
+    }
+
+    /// Returns true while the main WebView is displaying a Google account-management or
+    /// authentication page (or an auth error) so the compact native header bar should appear.
+    pub fn is_account_flow_active(&self) -> bool {
+        self.on_auth_page
+            || self.on_account_management_page
+            || matches!(
+                self.state,
+                AuthState::SigningIn { .. } | AuthState::AuthError { .. }
+            )
+    }
+
+    /// Computes the live presentation state for the compact native account-navigation header.
+    pub fn nav_bar_state(&self, webview_can_go_back: bool) -> AuthNavBarState {
+        if !self.is_account_flow_active() {
+            return AuthNavBarState::default();
+        }
+
+        if let AuthState::AuthError { message, .. } = &self.state {
+            return AuthNavBarState {
+                visible: true,
+                title: "Google Sign-In Interrupted".to_string(),
+                subtitle: message.clone(),
+                can_go_back: webview_can_go_back || self.last_gemini_url.is_some(),
+                is_error: true,
+                cancel_label: "Back to Gemini".to_string(),
+            };
+        }
+
+        if self.on_account_management_page && self.active_flow.is_none() {
+            return AuthNavBarState {
+                visible: true,
+                title: "Google Account".to_string(),
+                subtitle: "Return anytime without losing your Gemini session".to_string(),
+                can_go_back: webview_can_go_back || self.last_gemini_url.is_some(),
+                is_error: false,
+                cancel_label: "Done".to_string(),
+            };
+        }
+
+        let flow = self.active_flow.unwrap_or(SignInFlow::AccountChooser);
+        let subtitle = match flow {
+            SignInFlow::AccountChooser | SignInFlow::AddAccount => {
+                "Canceling keeps your current session unless Google already switched accounts"
+            }
+            SignInFlow::SignIn => "Sign in with Google or return to Gemini",
+            SignInFlow::SignOut => "Completing Google sign-out",
+        };
+
+        AuthNavBarState {
+            visible: true,
+            title: flow.header_title().to_string(),
+            subtitle: subtitle.to_string(),
+            can_go_back: webview_can_go_back || self.last_gemini_url.is_some(),
+            is_error: false,
+            cancel_label: "Cancel".to_string(),
+        }
     }
 
     /// Starts a validated official Google authentication flow and returns `(url, new_generation)`.
@@ -345,6 +505,11 @@ impl AuthController {
 
         self.flow_generation = self.flow_generation.saturating_add(1);
         self.active_flow = Some(flow);
+        self.last_flow = Some(flow);
+        self.on_auth_page = true;
+        self.on_account_management_page = false;
+        self.auth_nav_depth = 0;
+        self.last_observed_auth_url = None;
         self.state = AuthState::SigningIn {
             flow,
             stage: flow.display_stage().to_string(),
@@ -352,24 +517,94 @@ impl AuthController {
         Ok((url, self.flow_generation))
     }
 
-    /// Cancels any active sign-in flow, invalidates pending async probe callbacks,
-    /// and returns to the previous stable state (or `SignedOut`).
-    pub fn cancel_flow(&mut self) -> u64 {
+    /// Retries the most recent account flow after a navigation or challenge error.
+    pub fn retry_flow(&mut self) -> Result<(&'static str, u64), AuthErrorCode> {
+        let flow = self.last_flow.unwrap_or(SignInFlow::AccountChooser);
+        self.begin_flow(flow)
+    }
+
+    /// Cancels an active account-management flow without clearing cookies or storage,
+    /// invalidates pending async probe callbacks, and returns the safest strategy to
+    /// return to Gemini (history back when 1 step deep to avoid unnecessary reload, or
+    /// direct navigation to the preserved Gemini URL).
+    ///
+    /// Transitions to `AuthState::Returning` when leaving an auth page so GeminiDesk never
+    /// pretends an already-completed Google account change was undone; the live DOM probe
+    /// upon returning reports the real active Google session honestly.
+    pub fn cancel_flow(&mut self, webview_can_go_back: bool) -> (u64, AuthReturnAction) {
         self.flow_generation = self.flow_generation.saturating_add(1);
         self.active_flow = None;
-        self.state = match &self.previous_stable_state {
-            AuthState::Authenticated { .. } => self.previous_stable_state.clone(),
-            _ => AuthState::SignedOut,
+        let fallback_url = self.return_gemini_url();
+
+        if !self.on_auth_page && !self.on_account_management_page {
+            self.auth_nav_depth = 0;
+            self.last_observed_auth_url = None;
+            self.state = match &self.previous_stable_state {
+                AuthState::Authenticated { .. } => self.previous_stable_state.clone(),
+                _ => AuthState::SignedOut,
+            };
+            return (self.flow_generation, AuthReturnAction::AlreadyInWorkspace);
+        }
+
+        let depth = self.auth_nav_depth;
+        self.on_auth_page = false;
+        self.on_account_management_page = false;
+        self.auth_nav_depth = 0;
+        self.last_observed_auth_url = None;
+        self.state = AuthState::Returning {
+            message: "Returning to Gemini and verifying active Google session...".to_string(),
         };
-        self.flow_generation
+
+        let action = if depth <= 1 && webview_can_go_back {
+            AuthReturnAction::HistoryBack { fallback_url }
+        } else {
+            AuthReturnAction::NavigateTo(fallback_url)
+        };
+        (self.flow_generation, action)
+    }
+
+    /// Handles `Alt+Left` / Back navigation consistently with browser history.
+    /// Steps back one page when deeper inside a multi-step Google flow, or cleanly cancels
+    /// back to Gemini when at the entry screen of the account flow.
+    pub fn navigate_back_action(&mut self, webview_can_go_back: bool) -> (u64, AuthReturnAction) {
+        if self.auth_nav_depth > 1 && webview_can_go_back {
+            self.auth_nav_depth = self.auth_nav_depth.saturating_sub(1);
+            self.flow_generation = self.flow_generation.saturating_add(1);
+            return (
+                self.flow_generation,
+                AuthReturnAction::HistoryBack {
+                    fallback_url: self.return_gemini_url(),
+                },
+            );
+        }
+        self.cancel_flow(webview_can_go_back)
     }
 
     /// Updates state based on a top-level page load URL observed in the WebView.
     /// Returns `true` if a non-invasive DOM auth probe should run after this page finishes loading.
     pub fn on_page_url(&mut self, uri: &str, finished: bool) -> bool {
-        match classify_auth_url(uri) {
+        let kind = classify_auth_url(uri);
+        if matches!(
+            kind,
+            AuthUrlKind::GoogleSignIn
+                | AuthUrlKind::GoogleAccountChooser
+                | AuthUrlKind::GoogleAccountManagement
+                | AuthUrlKind::GoogleSignOut
+                | AuthUrlKind::GoogleAuthBlocked
+        ) && !finished
+        {
+            let key = crate::navigation::redact_url_for_log(uri);
+            if self.last_observed_auth_url.as_deref() != Some(key.as_str()) {
+                self.auth_nav_depth = self.auth_nav_depth.saturating_add(1);
+                self.last_observed_auth_url = Some(key);
+            }
+        }
+
+        match kind {
             AuthUrlKind::GoogleAuthBlocked => {
                 self.active_flow = None;
+                self.on_auth_page = true;
+                self.on_account_management_page = false;
                 self.state = AuthState::AuthError {
                     code: AuthErrorCode::EmbeddedBrowserBlocked,
                     message: "Google challenged this embedded WebView session. You can retry sign-in or open Gemini in your default system browser."
@@ -380,6 +615,9 @@ impl AuthController {
             AuthUrlKind::GoogleAccountChooser => {
                 let flow = self.active_flow.unwrap_or(SignInFlow::AccountChooser);
                 self.active_flow = Some(flow);
+                self.last_flow = Some(flow);
+                self.on_auth_page = true;
+                self.on_account_management_page = false;
                 self.state = AuthState::SigningIn {
                     flow,
                     stage: flow.display_stage().to_string(),
@@ -389,15 +627,25 @@ impl AuthController {
             AuthUrlKind::GoogleSignIn => {
                 let flow = self.active_flow.unwrap_or(SignInFlow::SignIn);
                 self.active_flow = Some(flow);
+                self.last_flow = Some(flow);
+                self.on_auth_page = true;
+                self.on_account_management_page = false;
                 self.state = AuthState::SigningIn {
                     flow,
                     stage: flow.display_stage().to_string(),
                 };
                 finished
             }
+            AuthUrlKind::GoogleAccountManagement => {
+                self.on_account_management_page = true;
+                false
+            }
             AuthUrlKind::GoogleSsoHandshake => {
                 let flow = self.active_flow.unwrap_or(SignInFlow::SignIn);
                 self.active_flow = Some(flow);
+                self.last_flow = Some(flow);
+                self.on_auth_page = true;
+                self.on_account_management_page = false;
                 self.state = AuthState::SigningIn {
                     flow,
                     stage: "Completing Google session handoff...".to_string(),
@@ -406,6 +654,9 @@ impl AuthController {
             }
             AuthUrlKind::GoogleSignOut => {
                 self.active_flow = Some(SignInFlow::SignOut);
+                self.last_flow = Some(SignInFlow::SignOut);
+                self.on_auth_page = true;
+                self.on_account_management_page = false;
                 self.state = AuthState::SigningIn {
                     flow: SignInFlow::SignOut,
                     stage: SignInFlow::SignOut.display_stage().to_string(),
@@ -414,6 +665,14 @@ impl AuthController {
             }
             AuthUrlKind::GeminiWorkspace { account_index } => {
                 self.last_account_index = account_index;
+                if let Some(clean_url) = sanitize_gemini_return_url(uri) {
+                    self.last_gemini_url = Some(clean_url);
+                }
+                self.on_auth_page = false;
+                self.on_account_management_page = false;
+                self.auth_nav_depth = 0;
+                self.last_observed_auth_url = None;
+                self.active_flow = None;
                 if finished {
                     self.flow_generation = self.flow_generation.saturating_add(1);
                     true
@@ -423,6 +682,31 @@ impl AuthController {
             }
             AuthUrlKind::OtherAllowed => false,
             AuthUrlKind::Disallowed => false,
+        }
+    }
+
+    /// Records a network or navigation failure when loading an authentication page.
+    pub fn on_load_failed(&mut self, uri: &str, error_desc: &str) -> bool {
+        let is_auth_uri = matches!(
+            classify_auth_url(uri),
+            AuthUrlKind::GoogleSignIn
+                | AuthUrlKind::GoogleAccountChooser
+                | AuthUrlKind::GoogleAccountManagement
+                | AuthUrlKind::GoogleSsoHandshake
+                | AuthUrlKind::GoogleSignOut
+                | AuthUrlKind::GoogleAuthBlocked
+        );
+        if self.is_account_flow_active() || is_auth_uri {
+            self.on_auth_page = true;
+            self.record_error(
+                AuthErrorCode::NetworkOrLoadError,
+                format!(
+                    "Could not load Google account page ({error_desc}). Retry or return to Gemini."
+                ),
+            );
+            true
+        } else {
+            false
         }
     }
 
@@ -440,6 +724,8 @@ impl AuthController {
         match result {
             AuthDomProbeResult::Authenticated { account_hint } => {
                 self.active_flow = None;
+                self.on_auth_page = false;
+                self.on_account_management_page = false;
                 self.state = AuthState::Authenticated {
                     account_hint,
                     multi_account_index: self.last_account_index,
@@ -448,11 +734,14 @@ impl AuthController {
             }
             AuthDomProbeResult::SignedOut => {
                 self.active_flow = None;
+                self.on_auth_page = false;
+                self.on_account_management_page = false;
                 self.state = AuthState::SignedOut;
                 self.previous_stable_state = AuthState::SignedOut;
             }
             AuthDomProbeResult::EmbeddedBrowserBlocked => {
                 self.active_flow = None;
+                self.on_auth_page = true;
                 self.state = AuthState::AuthError {
                     code: AuthErrorCode::EmbeddedBrowserBlocked,
                     message: "Google reported that this embedded browser may not be secure. Retry sign-in or open Gemini in your default system browser."
@@ -660,9 +949,10 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_invalidates_stale_callbacks_and_restores_prior_state() {
+    fn cancellation_invalidates_stale_callbacks_uses_history_back_and_verifies_honestly() {
         let mut ctrl = AuthController::new();
-        assert!(ctrl.on_page_url("https://gemini.google.com/app", true));
+        let convo_url = "https://gemini.google.com/app/conv-12345";
+        assert!(ctrl.on_page_url(convo_url, true));
         let g1 = ctrl.flow_generation();
         ctrl.apply_probe_result(
             g1,
@@ -671,27 +961,149 @@ mod tests {
             },
         )
         .unwrap();
+        assert!(!ctrl.nav_bar_state(false).visible);
 
-        // Start adding a second account, capture generation, then cancel.
-        let (_, add_gen) = ctrl.begin_flow(SignInFlow::AddAccount).unwrap();
-        let cancel_gen = ctrl.cancel_flow();
-        assert_ne!(add_gen, cancel_gen);
+        // Start Account Chooser flow (1 step deep -> should use HistoryBack to avoid reload).
+        let (_, switch_gen) = ctrl.begin_flow(SignInFlow::AccountChooser).unwrap();
+        assert!(!ctrl.on_page_url(GOOGLE_ACCOUNT_CHOOSER_URL, false));
+        assert!(ctrl.on_page_url(GOOGLE_ACCOUNT_CHOOSER_URL, true));
 
-        // Prior authenticated state is restored cleanly.
+        let bar = ctrl.nav_bar_state(true);
+        assert!(bar.visible);
+        assert_eq!(bar.title, "Switch Google Account");
+        assert_eq!(bar.cancel_label, "Cancel");
+
+        let (cancel_gen, action) = ctrl.cancel_flow(true);
+        assert_ne!(switch_gen, cancel_gen);
         assert_eq!(
-            ctrl.state(),
-            &AuthState::Authenticated {
-                account_hint: Some("Primary Account".into()),
-                multi_account_index: None,
+            action,
+            AuthReturnAction::HistoryBack {
+                fallback_url: convo_url.to_string(),
             }
         );
+        // Must enter Returning (not blindly claim old state) until live DOM probe confirms reality.
+        assert!(matches!(ctrl.state(), AuthState::Returning { .. }));
+        assert!(!ctrl.nav_bar_state(true).visible);
 
         // Any stale probe callback from the cancelled generation is rejected.
         assert_eq!(
-            ctrl.apply_probe_result(add_gen, AuthDomProbeResult::SignedOut),
+            ctrl.apply_probe_result(switch_gen, AuthDomProbeResult::SignedOut),
             Err(AuthErrorCode::CallbackStateMismatch)
         );
+
+        // If Google had ALREADY switched the active account before cancel, the probe reflects
+        // the real active account honestly rather than pretending the switch was undone.
+        assert!(ctrl.on_page_url("https://gemini.google.com/u/1/app", true));
+        let verify_gen = ctrl.flow_generation();
+        ctrl.apply_probe_result(
+            verify_gen,
+            AuthDomProbeResult::Authenticated {
+                account_hint: Some("Secondary Account".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ctrl.state(),
+            &AuthState::Authenticated {
+                account_hint: Some("Secondary Account".into()),
+                multi_account_index: Some(1),
+            }
+        );
+    }
+
+    #[test]
+    fn multi_step_auth_back_and_cancel_preserve_exact_gemini_conversation_url() {
+        let mut ctrl = AuthController::new();
+        let convo_url = "https://gemini.google.com/u/0/app/abc999";
+        assert!(ctrl.on_page_url(convo_url, true));
+        let g1 = ctrl.flow_generation();
+        ctrl.apply_probe_result(
+            g1,
+            AuthDomProbeResult::Authenticated {
+                account_hint: Some("Work Account".into()),
+            },
+        )
+        .unwrap();
+
+        // Step 1: AccountChooser, Step 2: Identifier page.
+        ctrl.begin_flow(SignInFlow::AccountChooser).unwrap();
+        ctrl.on_page_url(GOOGLE_ACCOUNT_CHOOSER_URL, false);
+        ctrl.on_page_url("https://accounts.google.com/v3/signin/identifier", false);
+
+        // Alt+Left while 2 steps deep steps back 1 page inside Google's flow.
+        let (_, back_action) = ctrl.navigate_back_action(true);
+        assert_eq!(
+            back_action,
+            AuthReturnAction::HistoryBack {
+                fallback_url: convo_url.to_string(),
+            }
+        );
+        assert!(ctrl.is_account_flow_active());
+
+        // Clicking Cancel while 2 steps deep navigates directly back to preserved Gemini URL.
+        ctrl.on_page_url("https://accounts.google.com/v3/signin/challenge/pwd", false);
+        let (_, cancel_action) = ctrl.cancel_flow(true);
+        assert_eq!(
+            cancel_action,
+            AuthReturnAction::NavigateTo(convo_url.to_string())
+        );
+        assert!(!ctrl.is_account_flow_active());
+    }
+
+    #[test]
+    fn account_management_page_shows_back_header_without_clobbering_auth_state() {
+        let mut ctrl = AuthController::new();
+        assert!(ctrl.on_page_url("https://gemini.google.com/app", true));
+        let g = ctrl.flow_generation();
+        ctrl.apply_probe_result(
+            g,
+            AuthDomProbeResult::Authenticated {
+                account_hint: Some("User".into()),
+            },
+        )
+        .unwrap();
+
+        // User opens myaccount.google.com from inside Gemini.
+        assert!(!ctrl.on_page_url(GOOGLE_ACCOUNT_HOME_URL, false));
+        let bar = ctrl.nav_bar_state(true);
+        assert!(bar.visible);
+        assert_eq!(bar.title, "Google Account");
+        assert_eq!(bar.cancel_label, "Done");
         assert!(matches!(ctrl.state(), AuthState::Authenticated { .. }));
+    }
+
+    #[test]
+    fn load_failure_and_retry_keep_header_accessible_and_sanitizes_return_urls() {
+        let mut ctrl = AuthController::new();
+        ctrl.begin_flow(SignInFlow::AccountChooser).unwrap();
+        assert!(ctrl.on_load_failed(GOOGLE_ACCOUNT_CHOOSER_URL, "connection reset"));
+        let bar = ctrl.nav_bar_state(false);
+        assert!(bar.visible);
+        assert!(bar.is_error);
+
+        let (retry_url, _) = ctrl.retry_flow().unwrap();
+        assert_eq!(retry_url, GOOGLE_ACCOUNT_CHOOSER_URL);
+        assert!(matches!(
+            ctrl.state(),
+            AuthState::SigningIn {
+                flow: SignInFlow::AccountChooser,
+                ..
+            }
+        ));
+
+        assert_eq!(
+            sanitize_gemini_return_url("https://gemini.google.com/u/1/app/123"),
+            Some("https://gemini.google.com/u/1/app/123".to_string())
+        );
+        assert_eq!(sanitize_gemini_return_url("https://evil.example/app"), None);
+        assert_eq!(
+            sanitize_gemini_return_url("https://user:pass@gemini.google.com/app"),
+            None
+        );
+        assert_eq!(
+            sanitize_gemini_return_url("http://gemini.google.com/app"),
+            None
+        );
     }
 
     #[test]

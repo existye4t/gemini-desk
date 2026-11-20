@@ -615,6 +615,13 @@
             </div>
             <label class="gd-switch"><input type="checkbox" id="minimize_to_tray" /><span class="gd-track"></span></label>
           </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Desktop notifications</div>
+              <div class="row-desc">Show native OS notices for updates or errors. Respects Do Not Disturb and never shows private chat content.</div>
+            </div>
+            <label class="gd-switch"><input type="checkbox" id="notifications_enabled" /><span class="gd-track"></span></label>
+          </div>
         </div>
       </section>
 
@@ -640,7 +647,9 @@
             </div>
             <div class="update-actions">
               <button class="gd-btn gd-btn-sm gd-btn-primary" type="button" id="btn-auth-signin">Sign in with Google</button>
+              <button class="gd-btn gd-btn-sm gd-btn-primary" type="button" id="btn-auth-back" hidden>Back to Gemini</button>
               <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-switch" hidden>Switch Account</button>
+              <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-add" hidden>Add Account</button>
               <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-cancel" hidden>Cancel</button>
               <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-signout" hidden>Sign Out</button>
             </div>
@@ -1074,7 +1083,7 @@
           </div>
         </div>
 
-        <div class="kv-row"><span class="kv-k">Version</span><span class="kv-v" id="about_version">0.4.0</span></div>
+        <div class="kv-row"><span class="kv-k">Version</span><span class="kv-v" id="about_version">1.0.0</span></div>
         <div class="kv-row"><span class="kv-k">Platform</span><span class="kv-v" id="about_platform">—</span></div>
         <div class="kv-row"><span class="kv-k">WebView Runtime</span><span class="kv-v" id="about_webview">—</span></div>
         <div class="kv-row"><span class="kv-k">Typography</span><span class="kv-v">Geist &amp; Geist Mono (SIL OFL 1.1)</span></div>
@@ -1404,6 +1413,7 @@
       minimize_to_tray: $('minimize_to_tray').checked,
       close_behavior: $('dd-close_behavior').dataset.value || 'minimize_to_tray',
       theme: activeTheme,
+      notifications_enabled: $('notifications_enabled').checked,
 
       quick_chat_shortcut: shortcutValues.quick_chat_shortcut,
       full_window_shortcut: shortcutValues.full_window_shortcut,
@@ -1467,6 +1477,7 @@
     const c = state.config;
     $('launch_at_startup').checked = !!c.launch_at_startup;
     $('minimize_to_tray').checked = !!c.minimize_to_tray;
+    $('notifications_enabled').checked = c.notifications_enabled !== false;
     setDropdownValue('dd-close_behavior', c.close_behavior);
     setSegmentedValue('theme-seg', c.theme);
 
@@ -1593,14 +1604,18 @@
     const msg = $('auth-msg');
     const errDetail = $('auth-error-detail');
     const btnSignIn = $('btn-auth-signin');
+    const btnBack = $('btn-auth-back');
     const btnSwitch = $('btn-auth-switch');
+    const btnAdd = $('btn-auth-add');
     const btnCancel = $('btn-auth-cancel');
     const btnSignOut = $('btn-auth-signout');
 
     dot.className = 'gd-dot';
     errDetail.hidden = true;
     btnSignIn.hidden = true;
+    btnBack.hidden = true;
     btnSwitch.hidden = true;
+    btnAdd.hidden = true;
     btnCancel.hidden = true;
     btnSignOut.hidden = true;
 
@@ -1619,6 +1634,7 @@
           ? `Active session in persistent WebView profile (account slot /u/${st.multi_account_index}).`
           : 'Your Google session is active and persists locally across restarts.';
         btnSwitch.hidden = false;
+        btnAdd.hidden = false;
         btnSignOut.hidden = false;
         break;
       case 'signed_out':
@@ -1631,16 +1647,23 @@
         dot.classList.add('warn');
         label.textContent = 'In progress';
         title.textContent = st.stage || 'Waiting for Google sign-in…';
-        msg.textContent = 'Complete authentication in the GeminiDesk main window.';
+        msg.textContent = 'Complete authentication in the main window, or click Back to Gemini (Alt+Left) to cancel safely without clearing your session.';
+        btnBack.hidden = false;
         btnCancel.hidden = false;
+        break;
+      case 'returning':
+        label.textContent = 'Verifying…';
+        title.textContent = 'Returning to Gemini…';
+        msg.textContent = st.message || 'Verifying the actual active Google session.';
         break;
       case 'auth_error':
         dot.classList.add('warn');
         label.textContent = 'Attention needed';
         title.textContent = 'Google sign-in could not complete';
-        msg.textContent = 'Retry inside GeminiDesk or open Gemini in your default system browser.';
+        msg.textContent = 'Retry inside GeminiDesk, return to Gemini, or open Gemini in your default system browser.';
         errDetail.textContent = st.message || 'Embedded WebView authentication was interrupted.';
         errDetail.hidden = false;
+        btnBack.hidden = false;
         btnSignIn.hidden = false;
         break;
     }
@@ -1713,7 +1736,7 @@
 
   /* Immediate Save Bindings */
   for (const id of [
-    'launch_at_startup', 'minimize_to_tray',
+    'launch_at_startup', 'minimize_to_tray', 'notifications_enabled',
     'quick_chat_hide_on_blur', 'quick_chat_width', 'quick_chat_height',
     'companion_always_on_top', 'companion_snap_to_edges',
     'ask_selection_enabled', 'ask_selection_clipboard_fallback',
@@ -1725,7 +1748,9 @@
   }
 
   $('btn-auth-signin').addEventListener('click', () => post({ type: 'start_sign_in' }));
+  $('btn-auth-back').addEventListener('click', () => post({ type: 'cancel_sign_in' }));
   $('btn-auth-switch').addEventListener('click', () => post({ type: 'switch_account' }));
+  $('btn-auth-add').addEventListener('click', () => post({ type: 'add_account' }));
   $('btn-auth-cancel').addEventListener('click', () => post({ type: 'cancel_sign_in' }));
   $('btn-auth-signout').addEventListener('click', () => {
     openConfirm(

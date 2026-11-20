@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
@@ -15,17 +15,19 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use wry::WebContext;
 
 use crate::auth::{
-    self, AuthController, AuthDomProbeResult, AuthErrorCode, GEMINI_APP_URL, SignInFlow,
+    self, AuthController, AuthDomProbeResult, AuthErrorCode, AuthReturnAction, GEMINI_APP_URL,
+    SignInFlow,
 };
 use crate::config::{
     self, AppConfig, AppPaths, AppState, CloseBehavior, PerformanceMode, ThemePreference,
     WindowGeometry, clear_safe_cache, compute_cache_size_bytes, default_clipboard_templates,
     load_config, load_state, save_config, save_state,
 };
-use crate::hotkeys::{HotkeyAction, HotkeyController};
+use crate::hotkeys::{HotkeyAction, HotkeyController, HotkeyStatus};
 use crate::icon;
+use crate::notifications;
 use crate::performance::PerformanceSampler;
-use crate::platform::{self, ActivationTarget};
+use crate::platform::{self, ActivationTarget, AuthNavHeader};
 use crate::productivity::CaptureSource;
 use crate::productivity::action_window::{ActionIpcMessage, ActionPanelContent, ActionWindow};
 use crate::productivity::clipboard::{self, ClipboardText};
@@ -33,8 +35,9 @@ use crate::productivity::screenshot::{self, CaptureOutcome};
 use crate::productivity::selection::{self, SelectionOutcome};
 use crate::settings_window::{SettingsIpcMessage, SettingsWindow};
 use crate::tray::{
-    MENU_ACCOUNT, MENU_CAPTURE_SCREENSHOT, MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT,
-    MENU_OPEN_GEMINI, MENU_QUICK_CHAT, MENU_QUIT, MENU_SETTINGS, TrayController,
+    MENU_ACCOUNT, MENU_AUTH_BACK, MENU_AUTH_CANCEL, MENU_CAPTURE_SCREENSHOT,
+    MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT, MENU_OPEN_GEMINI, MENU_QUICK_CHAT,
+    MENU_QUIT, MENU_SETTINGS, TrayController,
 };
 use crate::updater::{self, UpdateStatus, UpdaterConfig, VerifiedUpdateOffer};
 use crate::webview::{
@@ -145,7 +148,15 @@ pub enum AppEvent {
     HotkeyPressed(u32),
     #[allow(dead_code)]
     PortalHotkeyActivated(HotkeyAction),
-    UpdateCheckFinished(Result<Option<VerifiedUpdateOffer>, String>),
+    #[allow(dead_code)]
+    PortalShortcutsStatusUpdated {
+        status: HotkeyStatus,
+        permission_denied: bool,
+    },
+    UpdateCheckFinished {
+        result: Result<Option<VerifiedUpdateOffer>, String>,
+        user_initiated: bool,
+    },
     UpdateDownloadFinished(Result<PathBuf, String>),
     TrayMenu(String),
     TrayLeftClick,
@@ -153,12 +164,119 @@ pub enum AppEvent {
         finished: bool,
         uri: String,
     },
+    #[allow(dead_code)]
+    PageLoadFailed {
+        uri: String,
+        error: String,
+    },
+    CancelAuthFlow,
+    RetryAuthFlow,
+    AuthNavigateBack,
+    #[allow(dead_code)]
+    AuthEscapePressed,
+    VerifyAuthSession(u64),
     AuthProbeCompleted {
         generation: u64,
         result: AuthDomProbeResult,
     },
     DocumentTitleChanged(String),
     Quit,
+}
+
+/// Reusable single-slot condvar timer for Efficiency idle suspension checks.
+/// Avoids spawning leaked sleeping threads on repeated window hide/show cycles.
+struct IdleSuspendScheduler {
+    state: Arc<(Mutex<IdleTimerState>, Condvar)>,
+    worker_started: AtomicBool,
+}
+
+#[derive(Default)]
+struct IdleTimerState {
+    deadline: Option<(Instant, u64)>,
+    shutdown: bool,
+}
+
+impl IdleSuspendScheduler {
+    fn new() -> Self {
+        Self {
+            state: Arc::new((Mutex::new(IdleTimerState::default()), Condvar::new())),
+            worker_started: AtomicBool::new(false),
+        }
+    }
+
+    fn schedule(
+        &self,
+        delay: Duration,
+        generation: u64,
+        proxy: tao::event_loop::EventLoopProxy<AppEvent>,
+    ) {
+        if !self.worker_started.swap(true, Ordering::SeqCst) {
+            let shared = Arc::clone(&self.state);
+            std::thread::Builder::new()
+                .name("geminidesk-idle-timer".into())
+                .spawn(move || {
+                    let (lock, cvar) = &*shared;
+                    let mut guard = match lock.lock() {
+                        Ok(g) => g,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    loop {
+                        if guard.shutdown {
+                            break;
+                        }
+                        let Some((target, generation)) = guard.deadline else {
+                            guard = match cvar.wait(guard) {
+                                Ok(g) => g,
+                                Err(poisoned) => poisoned.into_inner(),
+                            };
+                            continue;
+                        };
+                        let now = Instant::now();
+                        if now >= target {
+                            guard.deadline = None;
+                            drop(guard);
+                            let _ = proxy.send_event(AppEvent::EvaluateIdleSuspend(generation));
+                            guard = match lock.lock() {
+                                Ok(g) => g,
+                                Err(poisoned) => poisoned.into_inner(),
+                            };
+                        } else {
+                            let wait_dur = target.saturating_duration_since(now);
+                            guard = match cvar.wait_timeout(guard, wait_dur) {
+                                Ok((g, _)) => g,
+                                Err(poisoned) => poisoned.into_inner().0,
+                            };
+                        }
+                    }
+                })
+                .ok();
+        }
+
+        let (lock, cvar) = &*self.state;
+        if let Ok(mut guard) = lock.lock() {
+            guard.deadline = Some((Instant::now() + delay, generation));
+            cvar.notify_one();
+        }
+    }
+
+    fn cancel(&self) {
+        let (lock, cvar) = &*self.state;
+        if let Ok(mut guard) = lock.lock()
+            && guard.deadline.is_some()
+        {
+            guard.deadline = None;
+            cvar.notify_one();
+        }
+    }
+
+    fn shutdown(&self) {
+        let (lock, cvar) = &*self.state;
+        if let Ok(mut guard) = lock.lock() {
+            guard.deadline = None;
+            guard.shutdown = true;
+            cvar.notify_all();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,9 +297,12 @@ struct DesktopApp {
     engine: WebViewEngine,
     active_host: ActiveHost,
     active_host_mode: Arc<AtomicU8>,
+    auth_flow_active: Arc<AtomicBool>,
+    auth_header: Option<AuthNavHeader>,
     last_quick_chat_shown: Option<Instant>,
     snapping_companion: bool,
     background_gen: Arc<AtomicU64>,
+    idle_scheduler: IdleSuspendScheduler,
     hotkeys: HotkeyController,
     tray: Option<TrayController>,
     settings_window: Option<SettingsWindow>,
@@ -202,7 +323,15 @@ struct DesktopApp {
 
 impl DesktopApp {
     fn bump_background_gen(&self) -> u64 {
+        self.idle_scheduler.cancel();
         self.background_gen.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn main_top_inset(&self) -> i32 {
+        self.auth_header
+            .as_ref()
+            .map(AuthNavHeader::top_inset_px)
+            .unwrap_or(0)
     }
 
     fn any_gemini_window_active(&self) -> bool {
@@ -242,7 +371,11 @@ impl DesktopApp {
             self.main_window.set_minimized(false);
         }
         self.main_window.set_visible(true);
-        self.engine.sync_bounds_to_window(&self.main_window);
+        if let Some(header) = &self.auth_header {
+            header.layout(&self.main_window);
+        }
+        self.engine
+            .sync_bounds_to_window_with_inset(&self.main_window, self.main_top_inset());
         platform::focus_window(&self.main_window);
         self.engine.focus();
 
@@ -389,7 +522,7 @@ impl DesktopApp {
         }
         self.capture_companion_geometry();
         self.persist_state();
-        self.companion_window.set_visible(false);
+        platform::hide_window(&self.companion_window);
         self.enter_background_state();
         info!("Floating Companion hidden");
     }
@@ -421,7 +554,7 @@ impl DesktopApp {
     fn hide_main_to_tray(&mut self) {
         self.capture_main_geometry();
         self.persist_state();
-        self.main_window.set_visible(false);
+        platform::hide_window(&self.main_window);
         self.enter_background_state();
         info!("Main window hidden to system tray");
     }
@@ -450,11 +583,8 @@ impl DesktopApp {
     fn schedule_idle_suspend_check(&self) {
         let generation = self.bump_background_gen();
         let delay = Duration::from_secs(self.config.efficiency_suspend_delay_secs as u64);
-        let proxy = self.proxy.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(delay);
-            let _ = proxy.send_event(AppEvent::EvaluateIdleSuspend(generation));
-        });
+        self.idle_scheduler
+            .schedule(delay, generation, self.proxy.clone());
     }
 
     fn handle_evaluate_idle_suspend(&self, expected_gen: u64) {
@@ -537,6 +667,49 @@ impl DesktopApp {
         }
     }
 
+    fn sync_auth_ui(&mut self) {
+        let active = self.auth.is_account_flow_active();
+        self.auth_flow_active.store(active, Ordering::Relaxed);
+        let bar_state = self.auth.nav_bar_state(self.engine.can_go_back());
+        if let Some(header) = &mut self.auth_header {
+            header.apply_state(&self.main_window, &bar_state);
+        }
+        if self.active_host == ActiveHost::Main && self.main_window.is_visible() {
+            self.engine
+                .sync_bounds_to_window_with_inset(&self.main_window, self.main_top_inset());
+        }
+        self.push_auth_state();
+    }
+
+    fn execute_auth_return(&mut self, generation: u64, action: AuthReturnAction) {
+        match action {
+            AuthReturnAction::HistoryBack { fallback_url } => {
+                let went_back = self.engine.go_back();
+                if !went_back && let Err(err) = self.engine.navigate_gemini_url(&fallback_url) {
+                    warn!(%err, "Fallback return to Gemini failed; loading default workspace");
+                    self.engine.load_new_chat();
+                } else if went_back {
+                    // Schedule an honest post-return DOM check in case BFCache restores the page
+                    // without emitting a new PageLoadEvent::Finished callback.
+                    let p = self.proxy.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(450));
+                        let _ = p.send_event(AppEvent::VerifyAuthSession(generation));
+                    });
+                }
+            }
+            AuthReturnAction::NavigateTo(url) => {
+                if let Err(err) = self.engine.navigate_gemini_url(&url) {
+                    warn!(%err, "Direct return to Gemini failed; loading default workspace");
+                    self.engine.load_new_chat();
+                }
+            }
+            AuthReturnAction::AlreadyInWorkspace => {
+                self.engine.probe_auth_state(generation, self.proxy.clone());
+            }
+        }
+    }
+
     fn start_auth_flow(&mut self, flow: SignInFlow) {
         match self.auth.begin_flow(flow) {
             Ok((url, _gen)) => {
@@ -546,20 +719,54 @@ impl DesktopApp {
                     self.auth
                         .record_error(AuthErrorCode::NetworkOrLoadError, err);
                 }
-                self.push_auth_state();
+                self.sync_auth_ui();
             }
             Err(code) => {
                 self.auth
                     .record_error(code, format!("Rejected invalid auth flow ({code:?})"));
-                self.push_auth_state();
+                self.sync_auth_ui();
+            }
+        }
+    }
+
+    fn retry_auth_flow(&mut self) {
+        match self.auth.retry_flow() {
+            Ok((url, _gen)) => {
+                self.show_main_window();
+                if let Err(err) = self.engine.navigate_auth_url(url) {
+                    warn!(%err, "Google auth retry navigation failed");
+                    self.auth
+                        .record_error(AuthErrorCode::NetworkOrLoadError, err);
+                }
+                self.sync_auth_ui();
+            }
+            Err(code) => {
+                self.auth
+                    .record_error(code, format!("Rejected invalid auth retry ({code:?})"));
+                self.sync_auth_ui();
             }
         }
     }
 
     fn cancel_auth_flow(&mut self) {
-        self.auth.cancel_flow();
-        self.engine.load_new_chat();
-        self.push_auth_state();
+        let can_back = self.engine.can_go_back();
+        let (generation, action) = self.auth.cancel_flow(can_back);
+        self.execute_auth_return(generation, action);
+        self.sync_auth_ui();
+        if self.active_host == ActiveHost::Main && self.main_window.is_visible() {
+            self.engine.focus();
+        }
+    }
+
+    fn navigate_auth_back(&mut self) {
+        if self.auth.is_account_flow_active() {
+            let can_back = self.engine.can_go_back();
+            let (generation, action) = self.auth.navigate_back_action(can_back);
+            self.execute_auth_return(generation, action);
+            self.sync_auth_ui();
+        } else if self.engine.can_go_back() {
+            let _ = self.engine.go_back();
+        }
     }
 
     fn set_update_status(&mut self, status: UpdateStatus) {
@@ -582,8 +789,11 @@ impl DesktopApp {
         std::thread::Builder::new()
             .name("geminidesk-update-check".into())
             .spawn(move || {
-                let res = updater::check_for_update(&cfg);
-                let _ = proxy.send_event(AppEvent::UpdateCheckFinished(res));
+                let result = updater::check_for_update(&cfg);
+                let _ = proxy.send_event(AppEvent::UpdateCheckFinished {
+                    result,
+                    user_initiated: true,
+                });
             })
             .ok();
     }
@@ -716,6 +926,7 @@ impl DesktopApp {
 
         // 5. Performance mode live update
         if new_cfg.performance_mode != self.config.performance_mode {
+            self.engine.apply_performance_mode(new_cfg.performance_mode);
             match new_cfg.performance_mode {
                 PerformanceMode::Performance => {
                     self.bump_background_gen();
@@ -743,6 +954,9 @@ impl DesktopApp {
         platform::style_main_window(&self.main_window, self.effective_dark);
         platform::style_main_window(&self.companion_window, self.effective_dark);
         platform::style_quick_chat_window(&self.quick_chat_window, self.effective_dark);
+        if let Some(header) = &self.auth_header {
+            header.apply_theme(self.effective_dark);
+        }
         self.engine.apply_theme(pref, self.effective_dark);
         if let Some(settings) = &self.settings_window {
             settings.apply_theme(self.effective_dark);
@@ -828,6 +1042,7 @@ impl DesktopApp {
 
     fn shutdown(&mut self) {
         self.bump_background_gen();
+        self.idle_scheduler.shutdown();
         self.capture_main_geometry();
         self.capture_companion_geometry();
         self.persist_state();
@@ -1019,12 +1234,16 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     // 4. Shared WebContext preserving existing Google sign-in profile
     let mut web_context = WebContext::new(Some(paths.webview_data_dir.clone()));
     let active_host_mode = Arc::new(AtomicU8::new(HOST_MAIN));
+    let auth_flow_active = Arc::new(AtomicBool::new(false));
+    let auth_header = AuthNavHeader::attach(&main_window, effective_dark, proxy.clone());
     let engine = WebViewEngine::new(
         &main_window,
         &mut web_context,
         theme_for_session,
+        cfg.performance_mode,
         effective_dark,
         Arc::clone(&active_host_mode),
+        Arc::clone(&auth_flow_active),
         startup_clock,
         proxy.clone(),
     )?;
@@ -1063,9 +1282,12 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         engine,
         active_host: ActiveHost::Main,
         active_host_mode,
+        auth_flow_active,
+        auth_header,
         last_quick_chat_shown: None,
         snapping_companion: false,
         background_gen: Arc::new(AtomicU64::new(0)),
+        idle_scheduler: IdleSuspendScheduler::new(),
         hotkeys,
         tray,
         settings_window: None,
@@ -1092,8 +1314,11 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
             .name("geminidesk-startup-update".into())
             .spawn(move || {
                 std::thread::sleep(Duration::from_secs(15));
-                let res = updater::check_for_update(&ucfg);
-                let _ = uproxy.send_event(AppEvent::UpdateCheckFinished(res));
+                let result = updater::check_for_update(&ucfg);
+                let _ = uproxy.send_event(AppEvent::UpdateCheckFinished {
+                    result,
+                    user_initiated: false,
+                });
             })
             .ok();
     }
@@ -1204,6 +1429,9 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                         app.start_auth_flow(SignInFlow::AccountChooser);
                     }
                     SettingsIpcMessage::SwitchAccount => {
+                        app.start_auth_flow(SignInFlow::AccountChooser);
+                    }
+                    SettingsIpcMessage::AddAccount => {
                         app.start_auth_flow(SignInFlow::AddAccount);
                     }
                     SettingsIpcMessage::SignOut => {
@@ -1256,6 +1484,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     SettingsIpcMessage::Close => {
                         app.settings_window = None;
                         app.perf_sampler.reset();
+                        platform::trim_allocator();
                     }
                 },
                 AppEvent::InvokeAskSelection => {
@@ -1324,6 +1553,11 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     CaptureOutcome::Error(err) => {
                         warn!(%err, "Screenshot capture failed");
+                        notifications::notify_if_enabled(
+                            app.config.notifications_enabled,
+                            "Screenshot capture unavailable",
+                            &err,
+                        );
                     }
                 },
                 AppEvent::InvokeClipboardActions => {
@@ -1410,6 +1644,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     ActionIpcMessage::Cancel => {
                         app.action_window = None;
+                        platform::trim_allocator();
                     }
                 },
                 AppEvent::EvaluateIdleSuspend(generation) => {
@@ -1426,8 +1661,29 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::PortalHotkeyActivated(action) => {
                     app.dispatch_hotkey_action(action);
                 }
-                AppEvent::UpdateCheckFinished(result) => match result {
+                AppEvent::PortalShortcutsStatusUpdated {
+                    status,
+                    permission_denied,
+                } => {
+                    #[cfg(target_os = "linux")]
+                    app.hotkeys.set_portal_status(status);
+                    #[cfg(not(target_os = "linux"))]
+                    let _ = status;
+                    if permission_denied {
+                        notifications::notify_if_enabled(
+                            app.config.notifications_enabled,
+                            "Global shortcuts disabled",
+                            "Wayland shortcut permission was declined. You can re-enable shortcuts in System Settings -> Shortcuts.",
+                        );
+                    }
+                    app.push_settings_state(None);
+                }
+                AppEvent::UpdateCheckFinished {
+                    result,
+                    user_initiated,
+                } => match result {
                     Ok(Some(offer)) => {
+                        let latest_ver = offer.version.clone();
                         let status = UpdateStatus::Available {
                             current_version: app.updater_cfg.current_version.clone(),
                             latest_version: offer.version.clone(),
@@ -1439,6 +1695,11 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                         app.pending_offer = Some(offer);
                         app.verified_download_path = None;
                         app.set_update_status(status);
+                        notifications::notify_if_enabled(
+                            app.config.notifications_enabled,
+                            &format!("GeminiDesk v{latest_ver} available"),
+                            "A verified update is available in Settings -> About.",
+                        );
                         if app.config.auto_download_updates {
                             app.start_update_download();
                         }
@@ -1451,13 +1712,18 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                         });
                     }
                     Err(message) => {
-                        app.set_update_status(UpdateStatus::Error { message });
+                        if user_initiated {
+                            app.set_update_status(UpdateStatus::Error { message });
+                        } else {
+                            warn!(%message, "Background startup update check skipped");
+                        }
                     }
                 },
                 AppEvent::UpdateDownloadFinished(result) => match result {
                     Ok(path) => {
                         app.verified_download_path = Some(path.clone());
                         if let Some(offer) = &app.pending_offer {
+                            let ver = offer.version.clone();
                             let sha_prefix: String =
                                 offer.artifact.sha256.chars().take(12).collect();
                             app.set_update_status(UpdateStatus::ReadyToInstall {
@@ -1468,6 +1734,11 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                                 sha256_prefix: sha_prefix,
                                 artifact_kind: offer.artifact.kind,
                             });
+                            notifications::notify_if_enabled(
+                                app.config.notifications_enabled,
+                                &format!("GeminiDesk v{ver} ready to install"),
+                                "Signature and SHA-256 verified. Open Settings -> About to install.",
+                            );
                         }
                     }
                     Err(message) => {
@@ -1487,6 +1758,8 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     MENU_CLIPBOARD_ACTIONS => {
                         let _ = app.proxy.send_event(AppEvent::InvokeClipboardActions);
                     }
+                    MENU_AUTH_BACK => app.navigate_auth_back(),
+                    MENU_AUTH_CANCEL => app.cancel_auth_flow(),
                     MENU_ACCOUNT => app.open_or_focus_settings(target, Some("account".into())),
                     MENU_SETTINGS => app.open_or_focus_settings(target, None),
                     MENU_QUIT => {
@@ -1507,15 +1780,39 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 AppEvent::PageLoadStateChanged { finished, uri } => {
                     let should_probe = app.auth.on_page_url(&uri, finished);
-                    app.push_auth_state();
+                    app.sync_auth_ui();
                     if should_probe {
                         app.engine
                             .probe_auth_state(app.auth.flow_generation(), app.proxy.clone());
                     }
                 }
+                AppEvent::PageLoadFailed { uri, error } => {
+                    if app.auth.on_load_failed(&uri, &error) {
+                        app.sync_auth_ui();
+                    }
+                }
+                AppEvent::CancelAuthFlow => {
+                    app.cancel_auth_flow();
+                }
+                AppEvent::RetryAuthFlow => {
+                    app.retry_auth_flow();
+                }
+                AppEvent::AuthNavigateBack => {
+                    app.navigate_auth_back();
+                }
+                AppEvent::AuthEscapePressed => {
+                    if app.auth.is_account_flow_active() {
+                        app.engine.check_escape_safe_to_cancel(app.proxy.clone());
+                    }
+                }
+                AppEvent::VerifyAuthSession(generation) => {
+                    if app.auth.flow_generation() == generation {
+                        app.engine.probe_auth_state(generation, app.proxy.clone());
+                    }
+                }
                 AppEvent::AuthProbeCompleted { generation, result } => {
                     if app.auth.apply_probe_result(generation, result).is_ok() {
-                        app.push_auth_state();
+                        app.sync_auth_ui();
                     }
                 }
                 AppEvent::DocumentTitleChanged(doc_title) => {
@@ -1562,11 +1859,17 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                                     app.enter_background_state();
                                 }
                             } else if app.main_window.is_visible() {
-                                if app.active_host == ActiveHost::Main
-                                    && (app.engine.is_low_memory() || app.engine.is_suspended())
-                                {
-                                    app.wake_engine();
-                                    app.engine.sync_bounds_to_window(&app.main_window);
+                                if let Some(header) = &app.auth_header {
+                                    header.layout(&app.main_window);
+                                }
+                                if app.active_host == ActiveHost::Main {
+                                    if app.engine.is_low_memory() || app.engine.is_suspended() {
+                                        app.wake_engine();
+                                    }
+                                    app.engine.sync_bounds_to_window_with_inset(
+                                        &app.main_window,
+                                        app.main_top_inset(),
+                                    );
                                 }
                                 app.capture_main_geometry();
                             }
@@ -1640,6 +1943,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 {
                     app.settings_window = None;
                     app.perf_sampler.reset();
+                    platform::trim_allocator();
                 } else if app
                     .action_window
                     .as_ref()
@@ -1647,6 +1951,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     && matches!(win_event, WindowEvent::CloseRequested)
                 {
                     app.action_window = None;
+                    platform::trim_allocator();
                 }
             }
             Event::Reopen {

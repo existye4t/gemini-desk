@@ -102,6 +102,11 @@ impl HotkeyController {
         &self.status
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn set_portal_status(&mut self, status: HotkeyStatus) {
+        self.status = status;
+    }
+
     /// Parses a user-facing shortcut string (e.g. `"Alt+Space"`, `"Ctrl+Alt+G"`).
     /// Returns `Ok(None)` when the string is empty (shortcut disabled).
     pub fn parse_shortcut(spec: &str) -> Result<Option<HotKey>, String> {

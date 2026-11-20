@@ -35,6 +35,7 @@ pub enum SettingsIpcMessage {
     OpenProfileFolder,
     StartSignIn,
     SwitchAccount,
+    AddAccount,
     SignOut,
     CancelSignIn,
     OpenGeminiInDefaultBrowser,

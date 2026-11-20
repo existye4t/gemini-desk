@@ -1,5 +1,8 @@
 /target
 /dist
+packaging/linux/pkg/
+packaging/linux/src/
+packaging/linux/*.pkg.tar.*
 *.pdb
 *.log
 .DS_Store

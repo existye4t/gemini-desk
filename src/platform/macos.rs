@@ -29,10 +29,12 @@ use tao::window::{Theme, Window};
 use tracing::warn;
 
 use crate::app::AppEvent;
+use crate::auth::AuthNavBarState;
 use crate::platform::ActivationTarget;
 use crate::tray::{
-    MENU_CAPTURE_SCREENSHOT, MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT,
-    MENU_OPEN_GEMINI, MENU_QUICK_CHAT, MENU_QUIT, MENU_SETTINGS,
+    MENU_ACCOUNT, MENU_AUTH_BACK, MENU_AUTH_CANCEL, MENU_CAPTURE_SCREENSHOT,
+    MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT, MENU_OPEN_GEMINI, MENU_QUICK_CHAT,
+    MENU_QUIT, MENU_SETTINGS,
 };
 
 pub const MACOS_BUNDLE_ID: &str = "io.geminidesk.GeminiDesk";
@@ -87,6 +89,36 @@ pub fn focus_window(window: &Window) {
         app.activateIgnoringOtherApps(true);
     }
     window.set_focus();
+}
+
+/// Lightweight macOS window-title coordinator for active Google account-management flows
+/// (paired with native Window menu items `Back to Gemini` / `Cancel Account Switching`).
+pub struct AuthNavHeader {
+    visible: bool,
+}
+
+impl AuthNavHeader {
+    pub fn attach(_window: &Window, _dark: bool, _proxy: EventLoopProxy<AppEvent>) -> Option<Self> {
+        Some(Self { visible: false })
+    }
+
+    pub fn apply_theme(&self, _dark: bool) {}
+
+    pub fn apply_state(&mut self, window: &Window, state: &AuthNavBarState) {
+        if state.visible {
+            window.set_title(&format!("GeminiDesk — {}", state.title));
+            self.visible = true;
+        } else if self.visible {
+            window.set_title("GeminiDesk");
+            self.visible = false;
+        }
+    }
+
+    pub fn layout(&self, _window: &Window) {}
+
+    pub fn top_inset_px(&self) -> i32 {
+        0
+    }
 }
 
 pub fn is_window_still_active_or_owned(window: &Window) -> bool {
@@ -156,6 +188,25 @@ pub fn install_app_menu() -> Option<Menu> {
         "New Chat",
         true,
         Some(Accelerator::new(Modifiers::META, Code::KeyN)),
+    ));
+    let _ = window_menu.append(&PredefinedMenuItem::separator());
+    let _ = window_menu.append(&MenuItem::with_id(
+        MENU_AUTH_BACK,
+        "Back to Gemini",
+        true,
+        Some(Accelerator::new(Modifiers::META, Code::BracketLeft)),
+    ));
+    let _ = window_menu.append(&MenuItem::with_id(
+        MENU_AUTH_CANCEL,
+        "Cancel Account Switching",
+        true,
+        None,
+    ));
+    let _ = window_menu.append(&MenuItem::with_id(
+        MENU_ACCOUNT,
+        "Google Account & Sign-In...",
+        true,
+        None,
     ));
     let _ = window_menu.append(&PredefinedMenuItem::separator());
     let _ = window_menu.append(&MenuItem::with_id(

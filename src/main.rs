@@ -9,6 +9,7 @@ mod config;
 mod hotkeys;
 mod icon;
 mod navigation;
+mod notifications;
 mod performance;
 mod platform;
 mod productivity;

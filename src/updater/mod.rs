@@ -459,8 +459,23 @@ pub fn launch_verified_installer(
                 .map_err(|e| format!("Failed opening verified macOS DMG: {e}"))?;
             Ok(false)
         }
+        ArtifactKind::LinuxAppImage => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(err) =
+                    fs::set_permissions(verified_path, fs::Permissions::from_mode(0o755))
+                {
+                    warn!(?err, "Could not mark verified AppImage executable");
+                }
+            }
+            let target = verified_path.parent().unwrap_or(verified_path);
+            if let Err(err) = open::that(target) {
+                warn!(?err, "Could not open updates folder automatically");
+            }
+            Ok(false)
+        }
         ArtifactKind::PortableZip
-        | ArtifactKind::LinuxAppImage
         | ArtifactKind::LinuxDeb
         | ArtifactKind::LinuxRpm
         | ArtifactKind::LinuxTarball => {
@@ -859,5 +874,80 @@ mod tests {
         let agent = build_http_agent();
         let res = fetch_bounded_bytes(&agent, "https://127.0.0.1:1/latest.json", 1024);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn enforces_min_supported_version_and_pre_install_toctou_check() {
+        let (sk, pk) = test_keypair();
+        let payload = b"verified-release-binary-v1.0.0";
+        let bytes = sample_manifest(
+            "1.0.0",
+            "https://github.com/existye4t/gemini-desk/releases/download/v1.0.0/setup.exe",
+            payload,
+        );
+        let sig = sk.sign(&bytes).to_bytes();
+
+        // Running v0.2.0 is below min_supported_version 0.3.0 -> must reject with clear guidance.
+        let old_cfg = test_cfg(pk, "0.2.0", "windows-x86_64", std::env::temp_dir());
+        let err = evaluate_signed_manifest(&bytes, &sig, &pk, &old_cfg).unwrap_err();
+        assert!(err.contains("requires v0.3.0 or newer"));
+
+        // Pre-install TOCTOU check rejects a modified file on disk.
+        let tmp_file =
+            std::env::temp_dir().join(format!("geminidesk-toctou-{}.bin", std::process::id()));
+        fs::write(&tmp_file, b"tampered-after-download-bytes!").unwrap();
+        let expected_sha = sha256_hex(payload);
+        let res = launch_verified_installer(
+            &tmp_file,
+            &expected_sha,
+            payload.len() as u64,
+            ArtifactKind::LinuxAppImage,
+        );
+        assert!(res.is_err());
+        let _ = fs::remove_file(&tmp_file);
+    }
+
+    #[test]
+    fn rejects_truncated_interrupted_download_and_cleans_part_file() {
+        let (sk, pk) = test_keypair();
+        let full_payload = b"complete-update-payload-that-will-be-truncated-mid-stream".to_vec();
+        let truncated = full_payload[..12].to_vec();
+
+        let tmp_dir =
+            std::env::temp_dir().join(format!("geminidesk-trunc-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp_dir);
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req_buf = [0u8; 256];
+                let _ = stream.read(&mut req_buf);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    truncated.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&truncated);
+            }
+        });
+
+        let mut cfg = test_cfg(pk, "0.4.0", "windows-x86_64", tmp_dir.clone());
+        cfg.allow_insecure_http_for_tests = true;
+        let url = format!("http://{addr}/trunc");
+        let manifest = sample_manifest("1.0.0", &url, &full_payload);
+        let sig = sk.sign(&manifest).to_bytes();
+        let offer = evaluate_signed_manifest(&manifest, &sig, &pk, &cfg)
+            .unwrap()
+            .unwrap();
+
+        let err = download_and_verify_artifact(&offer, &cfg).unwrap_err();
+        assert!(err.contains("Incomplete download"));
+        assert!(!tmp_dir.join("GeminiDesk-Setup-1.0.0.exe").exists());
+        assert!(!tmp_dir.join("GeminiDesk-Setup-1.0.0.exe.part").exists());
+
+        let _ = handle.join();
+        let _ = fs::remove_dir_all(&tmp_dir);
     }
 }

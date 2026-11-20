@@ -12,6 +12,10 @@ pub const MENU_NEW_CHAT: &str = "new_chat";
 pub const MENU_CAPTURE_SCREENSHOT: &str = "capture_screenshot";
 pub const MENU_CLIPBOARD_ACTIONS: &str = "clipboard_actions";
 pub const MENU_ACCOUNT: &str = "account";
+#[allow(dead_code)]
+pub const MENU_AUTH_BACK: &str = "auth_back";
+#[allow(dead_code)]
+pub const MENU_AUTH_CANCEL: &str = "auth_cancel";
 pub const MENU_SETTINGS: &str = "settings";
 pub const MENU_QUIT: &str = "quit";
 

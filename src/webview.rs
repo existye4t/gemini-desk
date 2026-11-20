@@ -26,7 +26,7 @@ use tao::platform::macos::WindowExtMacOS;
 use wry::WebViewExtMacOS;
 
 use crate::app::AppEvent;
-use crate::config::ThemePreference;
+use crate::config::{PerformanceMode, ThemePreference};
 use crate::navigation::{
     NavigationDecision, NewWindowDecision, classify_navigation, classify_new_window,
     redact_url_for_log,
@@ -50,12 +50,15 @@ pub struct WebViewEngine {
 }
 
 impl WebViewEngine {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         window: &Window,
         web_context: &mut WebContext,
         theme_pref: ThemePreference,
+        perf_mode: PerformanceMode,
         is_dark: bool,
         active_host_mode: Arc<AtomicU8>,
+        auth_flow_active: Arc<AtomicBool>,
         startup_clock: Instant,
         proxy: EventLoopProxy<AppEvent>,
     ) -> wry::Result<Self> {
@@ -207,18 +210,19 @@ impl WebViewEngine {
 
         #[cfg(target_os = "windows")]
         {
+            let _ = perf_mode;
             apply_lean_webview2_settings(&webview);
-            install_windows_accelerators(&webview, active_host_mode, proxy);
+            install_windows_accelerators(&webview, active_host_mode, auth_flow_active, proxy);
         }
 
         #[cfg(target_os = "linux")]
         {
-            apply_webkitgtk_settings(&webview);
-            install_linux_accelerators(&webview, active_host_mode, proxy);
+            apply_webkitgtk_settings(&webview, perf_mode, proxy.clone());
+            install_linux_accelerators(&webview, active_host_mode, auth_flow_active, proxy);
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        let _ = (active_host_mode, proxy);
+        let _ = (perf_mode, active_host_mode, auth_flow_active, proxy);
 
         Ok(Self {
             webview,
@@ -266,11 +270,19 @@ impl WebViewEngine {
     /// Synchronizes both the native WebView host child HWND and the WebView2 controller
     /// bounds to `target_window`'s exact inner client size after reparenting or showing.
     pub fn sync_bounds_to_window(&self, target_window: &Window) {
+        self.sync_bounds_to_window_with_inset(target_window, 0);
+    }
+
+    /// Synchronizes WebView bounds while reserving `top_inset_px` at the top of the client area
+    /// (used on Windows when the native account-navigation header bar is visible).
+    pub fn sync_bounds_to_window_with_inset(&self, target_window: &Window, top_inset_px: i32) {
         let size = target_window.inner_size();
-        if size.width > 0 && size.height > 0 {
+        let top = top_inset_px.max(0);
+        if size.width > 0 && size.height as i32 > top {
+            let avail_h = (size.height as i32 - top).max(1) as u32;
             let bounds = wry::Rect {
-                position: tao::dpi::PhysicalPosition::new(0, 0).into(),
-                size: size.into(),
+                position: tao::dpi::PhysicalPosition::new(0, top).into(),
+                size: tao::dpi::PhysicalSize::new(size.width, avail_h).into(),
             };
             if let Err(err) = self.webview.set_bounds(bounds) {
                 warn!(?err, "Failed to sync WebView bounds to target window");
@@ -285,7 +297,7 @@ impl WebViewEngine {
                 let mut rc = RECT::default();
                 if unsafe { GetClientRect(parent_hwnd, &mut rc) }.is_ok() {
                     let w = rc.right - rc.left;
-                    let h = rc.bottom - rc.top;
+                    let h = (rc.bottom - rc.top - top).max(1);
                     if w > 0 && h > 0 {
                         let controller = self.webview.controller();
                         let _ = unsafe {
@@ -305,7 +317,7 @@ impl WebViewEngine {
                                     host_hwnd,
                                     None,
                                     0,
-                                    0,
+                                    top,
                                     w,
                                     h,
                                     SWP_NOACTIVATE | SWP_NOZORDER,
@@ -322,6 +334,16 @@ impl WebViewEngine {
         if let Err(err) = self.webview.set_visible(visible) {
             warn!(?err, visible, "Failed to update WebView visibility");
         }
+        #[cfg(target_os = "linux")]
+        {
+            use gtk::prelude::WidgetExt;
+            let wk = self.webview.webview();
+            if visible {
+                wk.show();
+            } else {
+                wk.hide();
+            }
+        }
     }
 
     pub fn focus(&self) {
@@ -330,11 +352,79 @@ impl WebViewEngine {
         }
     }
 
+    /// Returns whether the native WebView has a previous page in its back-forward history.
+    pub fn can_go_back(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::WebViewExt;
+            self.webview.webview().can_go_back()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let wv = self.webview.webview();
+            let mut can = windows::core::BOOL::default();
+            unsafe { wv.CanGoBack(&mut can) }.is_ok() && can.as_bool()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            true
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            false
+        }
+    }
+
+    /// Steps back one entry in native WebView history (preserving cached Gemini pages without
+    /// unnecessary full reloads). Returns `true` if history navigation was dispatched.
+    pub fn go_back(&self) -> bool {
+        self.resume_if_suspended();
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::WebViewExt;
+            let wk = self.webview.webview();
+            if wk.can_go_back() {
+                wk.go_back();
+                return true;
+            }
+            false
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let wv = self.webview.webview();
+            if self.can_go_back() && unsafe { wv.GoBack() }.is_ok() {
+                return true;
+            }
+            false
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.webview
+                .evaluate_script("window.history.back();")
+                .is_ok()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            false
+        }
+    }
+
     pub fn load_new_chat(&self) {
         self.resume_if_suspended();
         if let Err(err) = self.webview.load_url(GEMINI_APP_URL) {
             warn!(?err, "Failed to load Gemini home URL");
         }
+    }
+
+    /// Navigates cleanly back to a strictly validated `https://gemini.google.com/...` URL
+    /// (preserving the user's previous conversation/account slot when returning from auth).
+    pub fn navigate_gemini_url(&self, url: &str) -> Result<(), String> {
+        let safe = crate::auth::sanitize_gemini_return_url(url)
+            .ok_or_else(|| "Rejected non-Gemini return URL".to_string())?;
+        self.resume_if_suspended();
+        self.webview
+            .load_url(&safe)
+            .map_err(|err| format!("Failed to return to Gemini: {err}"))
     }
 
     /// Navigates the single shared WebView to a strictly validated official Google authentication
@@ -346,6 +436,40 @@ impl WebViewEngine {
         self.webview
             .load_url(url)
             .map_err(|err| format!("Failed to load Google auth URL: {err}"))
+    }
+
+    /// Non-invasive read-only check verifying that pressing `Escape` during an account flow
+    /// will NOT interfere with focused Google login inputs, selects, or modal dialogs.
+    pub fn check_escape_safe_to_cancel(&self, proxy: EventLoopProxy<AppEvent>) {
+        let script = r#"(function() {
+  try {
+    const ae = document.activeElement;
+    if (ae) {
+      const tag = (ae.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable) {
+        return 'unsafe';
+      }
+      if (ae.closest && ae.closest('[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]')) {
+        return 'unsafe';
+      }
+    }
+    if (document.querySelector('[role="dialog"][aria-modal="true"], [aria-modal="true"]')) {
+      return 'unsafe';
+    }
+    return 'safe';
+  } catch (_) {
+    return 'unsafe';
+  }
+})();"#;
+        let _ = self
+            .webview
+            .evaluate_script_with_callback(script, move |raw| {
+                let unwrapped = serde_json::from_str::<String>(raw.trim())
+                    .unwrap_or_else(|_| raw.trim().to_string());
+                if unwrapped == "safe" {
+                    let _ = proxy.send_event(AppEvent::CancelAuthFlow);
+                }
+            });
     }
 
     /// Event-driven, non-invasive read-only session probe executed strictly on `PageLoadEvent::Finished`.
@@ -468,11 +592,35 @@ impl WebViewEngine {
         }
     }
 
-    /// Switches WebView2 between Normal and Low memory usage target levels.
+    /// Applies live WebView engine tuning for the active `PerformanceMode` (never touches
+    /// cookies, persistent sessions, or active conversations).
+    pub fn apply_performance_mode(&self, mode: PerformanceMode) {
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::{CacheModel, WebContextExt, WebViewExt};
+            if let Some(ctx) = self.webview.webview().context() {
+                let model = match mode {
+                    PerformanceMode::Efficiency => CacheModel::DocumentViewer,
+                    PerformanceMode::Balanced | PerformanceMode::Performance => {
+                        CacheModel::WebBrowser
+                    }
+                };
+                ctx.set_cache_model(model);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = mode;
+    }
+
+    /// Switches WebView between Normal and Low memory usage modes.
+    /// - Windows: `ICoreWebView2MemoryUsageTargetLevel` (`Low` / `Normal`).
+    /// - Linux: clears strictly transient in-memory decoded resource cache (`MEMORY_CACHE` only —
+    ///   NEVER cookies, LocalStorage, IndexedDB, or active conversation state) and trims glibc arenas.
     pub fn set_low_memory(&self, low: bool) {
-        self.low_memory.store(low, Ordering::Relaxed);
+        let prev = self.low_memory.swap(low, Ordering::Relaxed);
         #[cfg(target_os = "windows")]
         {
+            let _ = prev;
             let level = if low {
                 MemoryUsageLevel::Low
             } else {
@@ -482,9 +630,18 @@ impl WebViewEngine {
                 warn!(?err, low, "Failed to set WebView2 memory usage level");
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            if low && !prev {
+                trim_webkitgtk_memory_cache(&self.webview);
+                crate::platform::trim_allocator();
+            }
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        let _ = prev;
     }
 
-    /// Checks whether WebView2 is currently playing audio (e.g. Gemini Live / TTS readout).
+    /// Checks whether the WebView is currently playing audio (e.g. Gemini Live / TTS readout).
     fn is_playing_audio(&self) -> bool {
         #[cfg(target_os = "windows")]
         {
@@ -499,6 +656,12 @@ impl WebViewEngine {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::WebViewExt;
+            self.webview.webview().is_playing_audio()
+        }
+        #[cfg(not(target_os = "linux"))]
         false
     }
 
@@ -557,13 +720,16 @@ impl WebViewEngine {
         }
     }
 
-    /// Calls `ICoreWebView2_3::TrySuspend` after `check_safe_to_suspend` confirms idle state.
+    /// Suspends or trims idle WebView resources after `check_safe_to_suspend` confirms idle state.
+    /// - Windows: `ICoreWebView2_3::TrySuspend`.
+    /// - Linux: clears WebKitGTK transient `MEMORY_CACHE` + trims host glibc arenas while keeping
+    ///   cookies, sessions, and active conversations 100% intact.
     pub fn try_suspend(&self) {
+        if self.suspended.load(Ordering::Relaxed) {
+            return;
+        }
         #[cfg(target_os = "windows")]
         {
-            if self.suspended.load(Ordering::Relaxed) {
-                return;
-            }
             use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
             use webview2_com::TrySuspendCompletedHandler;
             use windows::core::Interface;
@@ -583,15 +749,22 @@ impl WebViewEngine {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            trim_webkitgtk_memory_cache(&self.webview);
+            crate::platform::trim_allocator();
+            self.suspended.store(true, Ordering::Relaxed);
+            info!("WebKitGTK idle memory cache trimmed cleanly in Efficiency mode");
+        }
     }
 
-    /// Resumes WebView2 immediately if suspended.
+    /// Resumes WebView immediately if suspended or idle-trimmed.
     pub fn resume_if_suspended(&self) {
+        if !self.suspended.swap(false, Ordering::Relaxed) {
+            return;
+        }
         #[cfg(target_os = "windows")]
         {
-            if !self.suspended.swap(false, Ordering::Relaxed) {
-                return;
-            }
             use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
             use windows::core::Interface;
 
@@ -603,6 +776,10 @@ impl WebViewEngine {
                     info!("WebView2 resumed from Efficiency suspension");
                 }
             }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            info!("WebKitGTK resumed from Efficiency idle state");
         }
     }
 
@@ -750,7 +927,9 @@ fn apply_lean_webview2_settings(webview: &WebView) {
 }
 
 /// Hooks native WebView2 `AcceleratorKeyPressed` events (zero persistent JS injection):
-/// - `Esc` (in Quick Chat mode only) -> hides Quick Chat immediately
+/// - `Esc` (in Quick Chat mode) -> hides Quick Chat immediately
+/// - `Esc` (in Main Window during account flow) -> passes through to Google AND runs safe-cancel check
+/// - `Alt + Left` -> navigates back cleanly (or returns to Gemini from account chooser)
 /// - `Ctrl + Shift + E` (in Quick Chat or Companion) -> expands into Full Window
 /// - `Ctrl + Shift + T` (in Companion) -> toggles Always on Top immediately
 /// - `Ctrl + ,` -> opens GeminiDesk Settings
@@ -758,6 +937,7 @@ fn apply_lean_webview2_settings(webview: &WebView) {
 fn install_windows_accelerators(
     webview: &WebView,
     active_host_mode: Arc<AtomicU8>,
+    auth_flow_active: Arc<AtomicBool>,
     proxy: EventLoopProxy<AppEvent>,
 ) {
     use webview2_com::AcceleratorKeyPressedEventHandler;
@@ -766,7 +946,7 @@ fn install_windows_accelerators(
         COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetKeyState, VK_CONTROL, VK_E, VK_ESCAPE, VK_OEM_COMMA, VK_SHIFT, VK_T,
+        GetKeyState, VK_CONTROL, VK_E, VK_ESCAPE, VK_LEFT, VK_MENU, VK_OEM_COMMA, VK_SHIFT, VK_T,
     };
 
     let controller = webview.controller();
@@ -789,11 +969,28 @@ fn install_windows_accelerators(
 
             let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
             let shift_down = (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0;
+            let alt_down = (GetKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0;
             let host = active_host_mode.load(Ordering::Relaxed);
 
             if vkey == VK_ESCAPE.0 as u32 && host == HOST_QUICK_CHAT {
                 let _ = args.SetHandled(true);
                 let _ = proxy.send_event(AppEvent::HideQuickChat);
+                return Ok(());
+            }
+
+            // Never override Escape inside Google's login inputs or dialogs: let the key
+            // pass through normally while requesting a read-only focus/dialog check.
+            if vkey == VK_ESCAPE.0 as u32
+                && host == HOST_MAIN
+                && auth_flow_active.load(Ordering::Relaxed)
+            {
+                let _ = proxy.send_event(AppEvent::AuthEscapePressed);
+                return Ok(());
+            }
+
+            if alt_down && !ctrl_down && !shift_down && vkey == VK_LEFT.0 as u32 {
+                let _ = args.SetHandled(true);
+                let _ = proxy.send_event(AppEvent::AuthNavigateBack);
                 return Ok(());
             }
 
@@ -828,10 +1025,30 @@ fn install_windows_accelerators(
 }
 
 #[cfg(target_os = "linux")]
-fn apply_webkitgtk_settings(webview: &WebView) {
+fn trim_webkitgtk_memory_cache(webview: &WebView) {
+    use webkit2gtk::{WebViewExt, WebsiteDataManagerExtManual, WebsiteDataTypes};
+    let wk = webview.webview();
+    if let Some(dm) = wk.website_data_manager() {
+        // Strictly clears transient in-memory decoded resource cache ONLY — never touches
+        // cookies, LocalStorage, IndexedDB, or active conversation state.
+        dm.clear(
+            WebsiteDataTypes::MEMORY_CACHE,
+            gtk::glib::TimeSpan::from_seconds(0),
+            gtk::gio::Cancellable::NONE,
+            |_| {},
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn apply_webkitgtk_settings(
+    webview: &WebView,
+    perf_mode: PerformanceMode,
+    proxy: EventLoopProxy<AppEvent>,
+) {
     use webkit2gtk::{
-        CookieAcceptPolicy, CookieManagerExt, HardwareAccelerationPolicy, SettingsExt, WebViewExt,
-        WebsiteDataManagerExt,
+        CacheModel, CookieAcceptPolicy, CookieManagerExt, HardwareAccelerationPolicy, SettingsExt,
+        WebContextExt, WebViewExt, WebsiteDataManagerExt,
     };
 
     let wk = webview.webview();
@@ -855,6 +1072,26 @@ fn apply_webkitgtk_settings(webview: &WebView) {
         settings.set_hardware_acceleration_policy(hw_policy);
     }
 
+    if let Some(ctx) = wk.context() {
+        let model = match perf_mode {
+            PerformanceMode::Efficiency => CacheModel::DocumentViewer,
+            PerformanceMode::Balanced | PerformanceMode::Performance => CacheModel::WebBrowser,
+        };
+        ctx.set_cache_model(model);
+    }
+
+    // Surface network/TLS/load failures during Google authentication flows so users see
+    // a clean Retry + Back to Gemini bar instead of a dead error page.
+    wk.connect_load_failed(move |_, _load_event, failing_uri, error| {
+        let safe_url = redact_url_for_log(failing_uri);
+        warn!(url = %safe_url, err = %error, "WebKitGTK page load failed");
+        let _ = proxy.send_event(AppEvent::PageLoadFailed {
+            uri: failing_uri.to_string(),
+            error: error.message().to_string(),
+        });
+        false
+    });
+
     // Because top-level navigation is strictly allowlisted to official Google domains in
     // `navigation.rs`, disabling WebKit ITP and allowing Google cross-subdomain SSO cookies
     // (`accounts.google.*`, `ogs.google.com`, `gemini.google.com`) preserves persistent sessions
@@ -868,7 +1105,9 @@ fn apply_webkitgtk_settings(webview: &WebView) {
 }
 
 /// Hooks native GTK `key-press-event` on the Linux `WebKitWebView` (zero persistent JS injection):
-/// - `Esc` (in Quick Chat mode only) -> hides Quick Chat immediately
+/// - `Esc` (in Quick Chat mode) -> hides Quick Chat immediately
+/// - `Esc` (in Main Window during account flow) -> proceeds to Google AND runs safe-cancel check
+/// - `Alt + Left` -> navigates back cleanly (or returns to Gemini from account chooser)
 /// - `Ctrl + Shift + E` (in Quick Chat or Companion) -> expands into Full Window
 /// - `Ctrl + Shift + T` (in Companion) -> toggles Always on Top immediately
 /// - `Ctrl + ,` -> opens GeminiDesk Settings
@@ -876,6 +1115,7 @@ fn apply_webkitgtk_settings(webview: &WebView) {
 fn install_linux_accelerators(
     webview: &WebView,
     active_host_mode: Arc<AtomicU8>,
+    auth_flow_active: Arc<AtomicBool>,
     proxy: EventLoopProxy<AppEvent>,
 ) {
     use gtk::gdk::{ModifierType, keys::constants as keys};
@@ -893,6 +1133,18 @@ fn install_linux_accelerators(
 
         if keyval == keys::Escape && host == HOST_QUICK_CHAT {
             let _ = proxy.send_event(AppEvent::HideQuickChat);
+            return Propagation::Stop;
+        }
+
+        // Never override Escape inside Google's login inputs or modal dialogs: allow normal
+        // propagation to WebKitGTK while scheduling a read-only focus/dialog check.
+        if keyval == keys::Escape && host == HOST_MAIN && auth_flow_active.load(Ordering::Relaxed) {
+            let _ = proxy.send_event(AppEvent::AuthEscapePressed);
+            return Propagation::Proceed;
+        }
+
+        if alt_down && !ctrl_down && !shift_down && keyval == keys::Left {
+            let _ = proxy.send_event(AppEvent::AuthNavigateBack);
             return Propagation::Stop;
         }
 

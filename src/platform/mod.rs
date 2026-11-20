@@ -216,7 +216,94 @@ pub fn active_monitor_work_area(fallback_window: &Window) -> WorkArea {
         return area;
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(area) = linux::active_monitor_work_area(fallback_window) {
+        return area;
+    }
+
     work_area_for_window(fallback_window)
+}
+
+/// Releases idle native allocator arenas back to the OS where supported (Linux glibc).
+pub fn trim_allocator() {
+    #[cfg(target_os = "linux")]
+    linux::trim_allocator();
+}
+
+/// Cross-platform native account-navigation header bar attached to the Main Window strictly
+/// while a Google account-management or sign-in flow is active.
+pub struct AuthNavHeader {
+    #[cfg(target_os = "linux")]
+    inner: linux::AuthNavHeader,
+    #[cfg(target_os = "windows")]
+    inner: windows::AuthNavHeader,
+    #[cfg(target_os = "macos")]
+    inner: macos::AuthNavHeader,
+}
+
+impl AuthNavHeader {
+    pub fn attach(
+        window: &Window,
+        dark: bool,
+        proxy: tao::event_loop::EventLoopProxy<crate::app::AppEvent>,
+    ) -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::AuthNavHeader::attach(window, dark, proxy).map(|inner| Self { inner })
+        }
+        #[cfg(target_os = "windows")]
+        {
+            windows::AuthNavHeader::attach(window, dark, proxy).map(|inner| Self { inner })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            macos::AuthNavHeader::attach(window, dark, proxy).map(|inner| Self { inner })
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            let _ = (window, dark, proxy);
+            None
+        }
+    }
+
+    pub fn apply_theme(&self, dark: bool) {
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        self.inner.apply_theme(dark);
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let _ = dark;
+    }
+
+    pub fn apply_state(&mut self, window: &Window, state: &crate::auth::AuthNavBarState) {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = window;
+            self.inner.apply_state(state);
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            self.inner.apply_state(window, state);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let _ = (window, state);
+    }
+
+    pub fn layout(&self, window: &Window) {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        self.inner.layout(window);
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let _ = window;
+    }
+
+    pub fn top_inset_px(&self) -> i32 {
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        {
+            self.inner.top_inset_px()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            0
+        }
+    }
 }
 
 /// Returns the usable work area of the monitor containing `window`.

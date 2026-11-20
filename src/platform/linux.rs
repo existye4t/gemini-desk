@@ -22,7 +22,8 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gtk::prelude::{
-    ContainerExt, CssProviderExt, GtkSettingsExt, GtkWindowExt, StyleContextExt, WidgetExt,
+    BoxExt, ButtonExt, ContainerExt, CssProviderExt, GtkSettingsExt, GtkWindowExt, LabelExt,
+    StyleContextExt, WidgetExt,
 };
 use tao::event_loop::EventLoopProxy;
 use tao::platform::unix::WindowExtUnix;
@@ -30,9 +31,10 @@ use tao::window::Window;
 use tracing::{info, warn};
 
 use crate::app::AppEvent;
+use crate::auth::AuthNavBarState;
 use crate::config::AppConfig;
 use crate::hotkeys::{HotkeyAction, HotkeyStatus, SingleHotkeyStatus};
-use crate::platform::ActivationTarget;
+use crate::platform::{ActivationTarget, WorkArea};
 
 /// Desktop application ID matching our `.desktop` and AppStream metadata files.
 pub const LINUX_APP_ID: &str = "io.geminidesk.GeminiDesk";
@@ -177,20 +179,34 @@ fn ensure_user_desktop_assets() {
         if let Some(parent) = user_desktop.parent() {
             let _ = fs::create_dir_all(parent);
         }
+        let exe_str = exe.display();
         let desktop_entry = format!(
             "[Desktop Entry]\n\
              Type=Application\n\
-             Version=1.0\n\
+             Version=1.5\n\
              Name=GeminiDesk\n\
-             GenericName=AI Assistant Desktop Client\n\
+             GenericName=Gemini Desktop Client\n\
              Comment=Lightweight native Rust desktop client for Google Gemini\n\
-             Exec=\"{}\" %U\n\
+             Exec=\"{exe_str}\" %U\n\
              Icon={LINUX_APP_ID}\n\
              Terminal=false\n\
-             Categories=Network;Utility;\n\
+             Categories=Network;Chat;\n\
+             Keywords=Gemini;AI;Google;Chat;Assistant;\n\
              StartupNotify=true\n\
-             StartupWMClass={LINUX_APP_ID}\n",
-            exe.display()
+             StartupWMClass={LINUX_APP_ID}\n\
+             Actions=QuickChat;Companion;Settings;\n\
+             \n\
+             [Desktop Action QuickChat]\n\
+             Name=Open Quick Chat\n\
+             Exec=\"{exe_str}\" --quick-chat\n\
+             \n\
+             [Desktop Action Companion]\n\
+             Name=Toggle Floating Companion\n\
+             Exec=\"{exe_str}\" --companion\n\
+             \n\
+             [Desktop Action Settings]\n\
+             Name=Settings\n\
+             Exec=\"{exe_str}\" --settings\n"
         );
         let _ = fs::write(&user_desktop, desktop_entry);
     }
@@ -284,6 +300,248 @@ pub fn is_window_still_active_or_owned(window: &Window) -> bool {
     window.gtk_window().is_active()
 }
 
+/// Queries the usable work area (excluding panels/docks) of the monitor currently containing
+/// the pointer, falling back to the primary monitor or `window`'s monitor.
+pub fn active_monitor_work_area(window: &Window) -> Option<WorkArea> {
+    use gtk::gdk::prelude::{DeviceExt, MonitorExt, SeatExt};
+
+    let display = gtk::gdk::Display::default()?;
+    let monitor = display
+        .default_seat()
+        .and_then(|seat| seat.pointer())
+        .and_then(|ptr| {
+            let (_screen, x, y) = ptr.position();
+            display.monitor_at_point(x, y)
+        })
+        .or_else(|| {
+            window
+                .gtk_window()
+                .window()
+                .and_then(|gdk_win| display.monitor_at_window(&gdk_win))
+        })
+        .or_else(|| display.primary_monitor())
+        .or_else(|| display.monitor(0))?;
+
+    let rect = monitor.workarea();
+    let scale = monitor.scale_factor().max(1);
+    Some(WorkArea {
+        x: rect.x() * scale,
+        y: rect.y() * scale,
+        width: (rect.width() * scale).max(320),
+        height: (rect.height() * scale).max(240),
+    })
+}
+
+/// Hints glibc to release freed heap arenas back to the Linux kernel after closing
+/// transient utility windows or entering background tray mode.
+pub fn trim_allocator() {
+    #[cfg(target_env = "gnu")]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        unsafe {
+            let _ = malloc_trim(0);
+        }
+    }
+}
+
+/// Subtle, compact (`38px`) native GTK3 navigation header mounted at the top of the Main Window
+/// strictly while a Google account-management or sign-in flow is active.
+/// Zero duplicate WebViews, zero JS injection into `accounts.google.com`.
+pub struct AuthNavHeader {
+    container: gtk::Box,
+    back_btn: gtk::Button,
+    title_lbl: gtk::Label,
+    subtitle_lbl: gtk::Label,
+    retry_btn: gtk::Button,
+    cancel_btn: gtk::Button,
+    css_provider: gtk::CssProvider,
+    visible: bool,
+}
+
+impl AuthNavHeader {
+    pub fn attach(window: &Window, dark: bool, proxy: EventLoopProxy<AppEvent>) -> Option<Self> {
+        let vbox = window.default_vbox()?;
+
+        let container = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        container.set_widget_name("gd-auth-bar");
+        container.set_size_request(-1, 38);
+        container.set_hexpand(true);
+        container.set_vexpand(false);
+        container.set_margin_start(0);
+        container.set_margin_end(0);
+
+        let back_btn = gtk::Button::with_label("←  Back to Gemini");
+        back_btn.set_widget_name("gd-auth-back");
+        back_btn.set_tooltip_text(Some("Return to Gemini (Alt+Left)"));
+        back_btn.set_relief(gtk::ReliefStyle::None);
+        {
+            let p = proxy.clone();
+            back_btn.connect_clicked(move |_| {
+                let _ = p.send_event(AppEvent::CancelAuthFlow);
+            });
+        }
+
+        let text_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        text_box.set_hexpand(true);
+
+        let title_lbl = gtk::Label::new(Some("Switch Google Account"));
+        title_lbl.set_widget_name("gd-auth-title");
+        title_lbl.set_xalign(0.0);
+
+        let subtitle_lbl = gtk::Label::new(None);
+        subtitle_lbl.set_widget_name("gd-auth-subtitle");
+        subtitle_lbl.set_xalign(0.0);
+        subtitle_lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        subtitle_lbl.set_hexpand(true);
+
+        text_box.pack_start(&title_lbl, false, false, 0);
+        text_box.pack_start(&subtitle_lbl, true, true, 0);
+
+        let retry_btn = gtk::Button::with_label("Retry");
+        retry_btn.set_widget_name("gd-auth-retry");
+        retry_btn.set_relief(gtk::ReliefStyle::None);
+        {
+            let p = proxy.clone();
+            retry_btn.connect_clicked(move |_| {
+                let _ = p.send_event(AppEvent::RetryAuthFlow);
+            });
+        }
+
+        let cancel_btn = gtk::Button::with_label("Cancel");
+        cancel_btn.set_widget_name("gd-auth-cancel");
+        cancel_btn.set_tooltip_text(Some("Cancel and return to Gemini (Esc)"));
+        cancel_btn.set_relief(gtk::ReliefStyle::None);
+        {
+            let p = proxy.clone();
+            cancel_btn.connect_clicked(move |_| {
+                let _ = p.send_event(AppEvent::CancelAuthFlow);
+            });
+        }
+
+        // Pressing Escape while keyboard focus is inside the native header bar safely cancels.
+        {
+            let p = proxy;
+            container.connect_key_press_event(move |_, ev| {
+                if ev.keyval() == gtk::gdk::keys::constants::Escape {
+                    let _ = p.send_event(AppEvent::CancelAuthFlow);
+                    return gtk::glib::Propagation::Stop;
+                }
+                gtk::glib::Propagation::Proceed
+            });
+        }
+
+        container.pack_start(&back_btn, false, false, 0);
+        container.pack_start(&text_box, true, true, 0);
+        container.pack_end(&cancel_btn, false, false, 0);
+        container.pack_end(&retry_btn, false, false, 0);
+
+        vbox.pack_start(&container, false, true, 0);
+        vbox.reorder_child(&container, 0);
+
+        let css_provider = gtk::CssProvider::new();
+        if let Some(screen) = gtk::gdk::Screen::default() {
+            gtk::StyleContext::add_provider_for_screen(
+                &screen,
+                &css_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+
+        let header = Self {
+            container,
+            back_btn,
+            title_lbl,
+            subtitle_lbl,
+            retry_btn,
+            cancel_btn,
+            css_provider,
+            visible: false,
+        };
+        header.apply_theme(dark);
+        header.container.set_no_show_all(true);
+        header.container.hide();
+        Some(header)
+    }
+
+    pub fn apply_theme(&self, dark: bool) {
+        let (bg, border, text, muted, btn_bg, btn_hover, btn_border) = if dark {
+            (
+                "#0B0B0C", "#242426", "#F2F2F4", "#8E8E93", "#18181A", "#262629", "#2E2E32",
+            )
+        } else {
+            (
+                "#FFFFFF", "#E5E5E7", "#111113", "#6E6E73", "#F4F4F6", "#EAEAEF", "#DCDCE0",
+            )
+        };
+        let css = format!(
+            "#gd-auth-bar {{\n\
+               background-color: {bg};\n\
+               border-bottom: 1px solid {border};\n\
+               padding: 4px 10px;\n\
+             }}\n\
+             #gd-auth-title {{\n\
+               color: {text};\n\
+               font-weight: 600;\n\
+               font-size: 12px;\n\
+               padding-left: 4px;\n\
+             }}\n\
+             #gd-auth-subtitle {{\n\
+               color: {muted};\n\
+               font-size: 11px;\n\
+               padding-left: 4px;\n\
+             }}\n\
+             #gd-auth-back, #gd-auth-cancel, #gd-auth-retry {{\n\
+               color: {text};\n\
+               background-color: {btn_bg};\n\
+               border: 1px solid {btn_border};\n\
+               border-radius: 6px;\n\
+               padding: 3px 10px;\n\
+               min-height: 24px;\n\
+               font-size: 12px;\n\
+               font-weight: 500;\n\
+             }}\n\
+             #gd-auth-back:hover, #gd-auth-cancel:hover, #gd-auth-retry:hover {{\n\
+               background-color: {btn_hover};\n\
+             }}\n"
+        );
+        let _ = self.css_provider.load_from_data(css.as_bytes());
+    }
+
+    pub fn apply_state(&mut self, state: &AuthNavBarState) {
+        if !state.visible {
+            if self.visible {
+                self.container.hide();
+                self.container.set_no_show_all(true);
+                self.visible = false;
+            }
+            return;
+        }
+
+        self.title_lbl.set_text(&state.title);
+        self.subtitle_lbl.set_text(&state.subtitle);
+        self.cancel_btn.set_label(&state.cancel_label);
+
+        self.container.set_no_show_all(false);
+        self.container.show_all();
+        self.back_btn.show();
+        if state.is_error {
+            self.retry_btn.show();
+            self.cancel_btn.hide();
+        } else {
+            self.retry_btn.hide();
+            self.cancel_btn.show();
+        }
+        self.visible = true;
+    }
+
+    pub fn top_inset_px(&self) -> i32 {
+        // GTK Box packs the header bar and WebView vertically without manual pixel insets.
+        0
+    }
+}
+
 fn autostart_desktop_file() -> Option<PathBuf> {
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -309,7 +567,7 @@ pub fn set_launch_at_startup(enabled: bool) -> Result<(), String> {
             "[Desktop Entry]\n\
              Type=Application\n\
              Name=GeminiDesk\n\
-             Comment=Unofficial Desktop Client for Google Gemini\n\
+             Comment=Lightweight native Rust desktop client for Google Gemini\n\
              Exec=\"{}\" --minimized\n\
              Icon={LINUX_APP_ID}\n\
              StartupWMClass={LINUX_APP_ID}\n\
@@ -473,67 +731,83 @@ pub fn to_xdg_trigger(spec: &str) -> String {
 /// Manages a background D-Bus XDG `org.freedesktop.portal.GlobalShortcuts` session on Wayland.
 pub struct PortalShortcutsSession {
     stop_flag: Arc<AtomicBool>,
+    session_path: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl PortalShortcutsSession {
-    /// Attempts to open an XDG GlobalShortcuts portal session and bind configured actions.
-    /// Returns `(Some(session), status)` when the portal is available (e.g., KDE Plasma 6 Wayland),
-    /// or `(None, fallback_status)` when the compositor does not expose the portal.
+    /// Starts an XDG GlobalShortcuts portal session asynchronously on a background thread so
+    /// desktop startup and KDE permission dialogs never block the UI event loop.
+    /// Returns `(Some(session), initial_status)` immediately; live approval/denial updates arrive
+    /// via `AppEvent::PortalShortcutsStatusUpdated`.
     pub fn try_start(
         cfg: &AppConfig,
         proxy: EventLoopProxy<AppEvent>,
     ) -> (Option<Self>, HotkeyStatus) {
-        let specs = build_portal_specs(cfg);
-        match connect_and_bind_portal(&specs) {
-            Ok((conn, session_path)) => {
-                info!(
-                    session = %session_path,
-                    desktop = %desktop_environment(),
-                    "Bound Wayland global shortcuts via XDG GlobalShortcuts portal"
-                );
-                let stop_flag = Arc::new(AtomicBool::new(false));
-                let stop_clone = Arc::clone(&stop_flag);
+        let (specs, conflicts) = build_portal_specs_checked(cfg);
+        let initial_status = portal_status_from_cfg(cfg, true, None, &conflicts);
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_clone = Arc::clone(&stop_flag);
+        let session_path = Arc::new(std::sync::Mutex::new(None));
+        let session_slot = Arc::clone(&session_path);
+        let cfg_clone = cfg.clone();
 
-                thread::Builder::new()
-                    .name("geminidesk-xdg-shortcuts".into())
-                    .spawn(move || {
-                        run_portal_signal_loop(conn, session_path, proxy, stop_clone);
-                    })
-                    .ok();
+        thread::Builder::new()
+            .name("geminidesk-xdg-shortcuts".into())
+            .spawn(move || {
+                run_portal_lifecycle(cfg_clone, specs, conflicts, proxy, stop_clone, session_slot);
+            })
+            .ok();
 
-                let status = portal_status_from_cfg(cfg, true, None);
-                (Some(Self { stop_flag }), status)
-            }
-            Err(reason) => {
-                warn!(
-                    desktop = %desktop_environment(),
-                    %reason,
-                    "XDG GlobalShortcuts portal unavailable; bind desktop shortcuts to CLI flags"
-                );
-                let hint = format!(
-                    "Wayland compositor portal unavailable ({reason}). Bind desktop shortcuts to `gemini-desk --quick-chat` / `--companion`."
-                );
-                let status = portal_status_from_cfg(cfg, false, Some(hint));
-                (None, status)
-            }
-        }
+        (
+            Some(Self {
+                stop_flag,
+                session_path,
+            }),
+            initial_status,
+        )
     }
 }
 
 impl Drop for PortalShortcutsSession {
     fn drop(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
+        if let Ok(mut guard) = self.session_path.lock()
+            && let Some(path) = guard.take()
+        {
+            close_portal_session_best_effort(&path);
+        }
     }
 }
 
+fn close_portal_session_best_effort(session_path: &str) {
+    if let Ok(conn) = zbus::blocking::Connection::session()
+        && let Ok(sess_proxy) = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.portal.Desktop",
+            session_path,
+            "org.freedesktop.portal.Session",
+        )
+    {
+        let _: Result<(), _> = sess_proxy.call("Close", &());
+    }
+}
+
+#[derive(Debug, Clone)]
 struct PortalShortcutSpec {
     id: &'static str,
     description: &'static str,
     trigger: String,
 }
 
-fn build_portal_specs(cfg: &AppConfig) -> Vec<PortalShortcutSpec> {
+/// Builds XDG GlobalShortcuts binding specs while detecting duplicate trigger assignments
+/// across enabled actions so conflicts are reported clearly in Settings -> Shortcuts.
+fn build_portal_specs_checked(
+    cfg: &AppConfig,
+) -> (Vec<PortalShortcutSpec>, HashMap<&'static str, String>) {
     let mut out = Vec::new();
+    let mut seen_triggers: HashMap<String, &'static str> = HashMap::new();
+    let mut conflicts: HashMap<&'static str, String> = HashMap::new();
+
     let entries = [
         (
             "toggle-quick-chat",
@@ -574,23 +848,35 @@ fn build_portal_specs(cfg: &AppConfig) -> Vec<PortalShortcutSpec> {
     ];
 
     for (id, description, spec, enabled) in entries {
-        if enabled && !spec.trim().is_empty() {
-            out.push(PortalShortcutSpec {
-                id,
-                description,
-                trigger: to_xdg_trigger(spec),
-            });
+        if !enabled || spec.trim().is_empty() {
+            continue;
         }
+        let trigger = to_xdg_trigger(spec);
+        let norm_key = trigger.to_ascii_lowercase();
+        if let Some(prev_id) = seen_triggers.get(&norm_key) {
+            conflicts.insert(
+                id,
+                format!("'{spec}' conflicts with another GeminiDesk shortcut ({prev_id})"),
+            );
+            continue;
+        }
+        seen_triggers.insert(norm_key, id);
+        out.push(PortalShortcutSpec {
+            id,
+            description,
+            trigger,
+        });
     }
-    out
+    (out, conflicts)
 }
 
 fn portal_status_from_cfg(
     cfg: &AppConfig,
     registered: bool,
-    error: Option<String>,
+    global_error: Option<String>,
+    conflicts: &HashMap<&'static str, String>,
 ) -> HotkeyStatus {
-    let make = |enabled: bool, spec: &str| {
+    let make = |id: &'static str, enabled: bool, spec: &str| {
         if !enabled {
             SingleHotkeyStatus {
                 registered: false,
@@ -603,21 +889,36 @@ fn portal_status_from_cfg(
                 enabled: true,
                 error: None,
             }
+        } else if let Some(conflict_msg) = conflicts.get(id) {
+            SingleHotkeyStatus {
+                registered: false,
+                enabled: true,
+                error: Some(conflict_msg.clone()),
+            }
         } else {
             SingleHotkeyStatus {
                 registered,
                 enabled: true,
-                error: error.clone(),
+                error: global_error.clone(),
             }
         }
     };
     HotkeyStatus {
-        quick_chat: make(true, &cfg.quick_chat_shortcut),
-        full_window: make(true, &cfg.full_window_shortcut),
-        companion: make(true, &cfg.companion_shortcut),
-        ask_selection: make(cfg.ask_selection_enabled, &cfg.ask_selection_shortcut),
-        screenshot: make(cfg.screenshot_enabled, &cfg.screenshot_shortcut),
+        quick_chat: make("toggle-quick-chat", true, &cfg.quick_chat_shortcut),
+        full_window: make("show-full-window", true, &cfg.full_window_shortcut),
+        companion: make("toggle-companion", true, &cfg.companion_shortcut),
+        ask_selection: make(
+            "ask-selection",
+            cfg.ask_selection_enabled,
+            &cfg.ask_selection_shortcut,
+        ),
+        screenshot: make(
+            "capture-screenshot",
+            cfg.screenshot_enabled,
+            &cfg.screenshot_shortcut,
+        ),
         clipboard_actions: make(
+            "clipboard-actions",
             cfg.clipboard_actions_enabled,
             &cfg.clipboard_actions_shortcut,
         ),
@@ -638,9 +939,141 @@ fn unique_token(prefix: &str) -> String {
     format!("{prefix}_{}_{nanos}", std::process::id())
 }
 
+fn run_portal_lifecycle(
+    cfg: AppConfig,
+    specs: Vec<PortalShortcutSpec>,
+    conflicts: HashMap<&'static str, String>,
+    proxy: EventLoopProxy<AppEvent>,
+    stop_flag: Arc<AtomicBool>,
+    session_slot: Arc<std::sync::Mutex<Option<String>>>,
+) {
+    if stop_flag.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let (conn, session_path, bind_req_path) = match connect_and_bind_portal(&specs) {
+        Ok(res) => res,
+        Err(reason) => {
+            warn!(
+                desktop = %desktop_environment(),
+                %reason,
+                "XDG GlobalShortcuts portal unavailable; bind desktop shortcuts to CLI flags"
+            );
+            let hint = format!(
+                "Wayland compositor portal unavailable ({reason}). Bind desktop shortcuts to `gemini-desk --quick-chat` / `--companion`."
+            );
+            let status = portal_status_from_cfg(&cfg, false, Some(hint), &conflicts);
+            let _ = proxy.send_event(AppEvent::PortalShortcutsStatusUpdated {
+                status,
+                permission_denied: false,
+            });
+            return;
+        }
+    };
+
+    if stop_flag.load(Ordering::Relaxed) {
+        close_portal_session_best_effort(&session_path);
+        return;
+    }
+
+    if let Ok(mut guard) = session_slot.lock() {
+        *guard = Some(session_path.clone());
+    }
+
+    info!(
+        session = %session_path,
+        desktop = %desktop_environment(),
+        "Opened Wayland XDG GlobalShortcuts portal session"
+    );
+
+    // Monitor asynchronous BindShortcuts permission dialog response on a helper thread so
+    // Activation signals are never delayed while waiting for user consent in KDE Plasma.
+    if let Some(req_path) = bind_req_path {
+        let cfg_resp = cfg.clone();
+        let conflicts_resp = conflicts.clone();
+        let proxy_resp = proxy.clone();
+        let stop_resp = Arc::clone(&stop_flag);
+        thread::Builder::new()
+            .name("geminidesk-xdg-bind-resp".into())
+            .spawn(move || {
+                monitor_bind_response(&req_path, &cfg_resp, &conflicts_resp, proxy_resp, stop_resp);
+            })
+            .ok();
+    }
+
+    run_portal_signal_loop(conn, session_path, proxy, stop_flag);
+}
+
+fn monitor_bind_response(
+    req_path: &str,
+    cfg: &AppConfig,
+    conflicts: &HashMap<&'static str, String>,
+    proxy: EventLoopProxy<AppEvent>,
+    stop_flag: Arc<AtomicBool>,
+) {
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return;
+    };
+    let Ok(req_proxy) = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.portal.Desktop",
+        req_path,
+        "org.freedesktop.portal.Request",
+    ) else {
+        return;
+    };
+    let Ok(mut responses) = req_proxy.receive_signal("Response") else {
+        return;
+    };
+
+    if let Some(resp_msg) = responses.next() {
+        if stop_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Ok((code, _results)) = resp_msg
+            .body()
+            .deserialize::<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>()
+        {
+            match code {
+                0 => {
+                    info!("XDG GlobalShortcuts permission approved by desktop environment");
+                    let status = portal_status_from_cfg(cfg, true, None, conflicts);
+                    let _ = proxy.send_event(AppEvent::PortalShortcutsStatusUpdated {
+                        status,
+                        permission_denied: false,
+                    });
+                }
+                1 => {
+                    warn!("XDG GlobalShortcuts permission denied/cancelled by user");
+                    let hint = "Global shortcut permission was declined in KDE/desktop prompt. You can re-enable shortcuts in System Settings -> Shortcuts or bind `gemini-desk --quick-chat`.".to_string();
+                    let status = portal_status_from_cfg(cfg, false, Some(hint), conflicts);
+                    let _ = proxy.send_event(AppEvent::PortalShortcutsStatusUpdated {
+                        status,
+                        permission_denied: true,
+                    });
+                }
+                other => {
+                    warn!(
+                        code = other,
+                        "XDG GlobalShortcuts BindShortcuts returned error"
+                    );
+                    let hint = format!(
+                        "Global shortcut registration returned portal code {other}. Configure shortcuts in System Settings -> Shortcuts."
+                    );
+                    let status = portal_status_from_cfg(cfg, false, Some(hint), conflicts);
+                    let _ = proxy.send_event(AppEvent::PortalShortcutsStatusUpdated {
+                        status,
+                        permission_denied: false,
+                    });
+                }
+            }
+        }
+    }
+}
+
 fn connect_and_bind_portal(
     specs: &[PortalShortcutSpec],
-) -> Result<(zbus::blocking::Connection, String), String> {
+) -> Result<(zbus::blocking::Connection, String, Option<String>), String> {
     use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
     let conn = zbus::blocking::Connection::session()
@@ -706,6 +1139,7 @@ fn connect_and_bind_portal(
         .and_then(|v| String::try_from(v.clone()).ok())
         .ok_or_else(|| "Missing session_handle in portal response".to_string())?;
 
+    let mut bind_req_path = None;
     if !specs.is_empty() {
         let mut shortcuts_payload: Vec<(&str, HashMap<&str, Value<'_>>)> =
             Vec::with_capacity(specs.len());
@@ -725,15 +1159,16 @@ fn connect_and_bind_portal(
         let sess_obj = ObjectPath::try_from(session_handle.as_str())
             .map_err(|e| format!("Invalid session ObjectPath: {e}"))?;
 
-        let _bind_req: OwnedObjectPath = portal
+        let bind_handle: OwnedObjectPath = portal
             .call(
                 "BindShortcuts",
                 &(sess_obj, shortcuts_payload, "", bind_opts),
             )
             .map_err(|e| format!("BindShortcuts failed: {e}"))?;
+        bind_req_path = Some(bind_handle.as_str().to_string());
     }
 
-    Ok((conn, session_handle))
+    Ok((conn, session_handle, bind_req_path))
 }
 
 fn run_portal_signal_loop(
@@ -779,5 +1214,35 @@ fn run_portal_signal_loop(
                 let _ = proxy.send_event(AppEvent::PortalHotkeyActivated(act));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_shortcut_specs_to_xdg_trigger_format() {
+        assert_eq!(to_xdg_trigger("Alt+Space"), "ALT+space");
+        assert_eq!(to_xdg_trigger("Alt+Shift+Space"), "ALT+SHIFT+space");
+        assert_eq!(to_xdg_trigger("Ctrl+Super+G"), "CTRL+LOGO+g");
+    }
+
+    #[test]
+    fn detects_duplicate_portal_shortcut_conflicts() {
+        let cfg = AppConfig {
+            quick_chat_shortcut: "Alt+Space".into(),
+            full_window_shortcut: "Alt+Space".into(),
+            ..Default::default()
+        };
+
+        let (specs, conflicts) = build_portal_specs_checked(&cfg);
+        assert!(conflicts.contains_key("show-full-window"));
+        assert!(!specs.iter().any(|s| s.id == "show-full-window"));
+
+        let status = portal_status_from_cfg(&cfg, true, None, &conflicts);
+        assert!(status.quick_chat.registered);
+        assert!(!status.full_window.registered);
+        assert!(status.full_window.error.is_some());
     }
 }

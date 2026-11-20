@@ -143,6 +143,8 @@ pub struct AppConfig {
     pub minimize_to_tray: bool,
     pub close_behavior: CloseBehavior,
     pub theme: ThemePreference,
+    #[serde(default = "default_true")]
+    pub notifications_enabled: bool,
 
     // --- Shortcuts ---
     pub quick_chat_shortcut: String,
@@ -205,6 +207,7 @@ impl Default for AppConfig {
             minimize_to_tray: false,
             close_behavior: CloseBehavior::MinimizeToTray,
             theme: ThemePreference::System,
+            notifications_enabled: true,
 
             quick_chat_shortcut: DEFAULT_QUICK_CHAT_SHORTCUT.to_string(),
             full_window_shortcut: DEFAULT_FULL_WINDOW_SHORTCUT.to_string(),
@@ -478,6 +481,7 @@ mod tests {
             minimize_to_tray: true,
             close_behavior: CloseBehavior::Quit,
             theme: ThemePreference::Dark,
+            notifications_enabled: false,
             quick_chat_shortcut: "Ctrl+Alt+G".into(),
             full_window_shortcut: "Ctrl+Shift+G".into(),
             companion_shortcut: "Alt+Shift+P".into(),
