@@ -246,9 +246,13 @@ impl WebViewEngine {
             if let Some(vbox) = target_window.default_vbox() {
                 self.webview.reparent(vbox)?;
                 // Reset any previous Quick Chat child size request so resizable Main/Companion
-                // windows can shrink freely below Quick Chat's dimensions.
-                self.webview.webview().set_size_request(-1, -1);
+                // windows can shrink freely below Quick Chat's dimensions, and request an
+                // immediate frame allocation + paint on the new top-level window.
+                let wk = self.webview.webview();
+                wk.set_size_request(-1, -1);
                 vbox.show_all();
+                wk.queue_resize();
+                wk.queue_draw();
             }
             self.sync_bounds_to_window(target_window);
         }
@@ -331,17 +335,27 @@ impl WebViewEngine {
     }
 
     pub fn set_visible(&self, visible: bool) {
-        if let Err(err) = self.webview.set_visible(visible) {
-            warn!(?err, visible, "Failed to update WebView visibility");
-        }
         #[cfg(target_os = "linux")]
         {
             use gtk::prelude::WidgetExt;
             let wk = self.webview.webview();
+            if wk.is_visible() == visible {
+                return;
+            }
+            if let Err(err) = self.webview.set_visible(visible) {
+                warn!(?err, visible, "Failed to update WebView visibility");
+            }
             if visible {
                 wk.show();
+                wk.queue_draw();
             } else {
                 wk.hide();
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if let Err(err) = self.webview.set_visible(visible) {
+                warn!(?err, visible, "Failed to update WebView visibility");
             }
         }
     }
@@ -611,8 +625,9 @@ impl WebViewEngine {
 
     /// Switches WebView between Normal and Low memory usage modes.
     /// - Windows: `ICoreWebView2MemoryUsageTargetLevel` (`Low` / `Normal`).
-    /// - Linux: clears strictly transient in-memory decoded resource cache (`MEMORY_CACHE` only —
-    ///   NEVER cookies, LocalStorage, IndexedDB, or active conversation state) and trims glibc arenas.
+    /// - Linux: trims host glibc arenas without evicting WebKit's decoded `MEMORY_CACHE` on
+    ///   transient hides (preventing asset re-decode hitches on Quick Chat / Main restores;
+    ///   `MEMORY_CACHE` trimming is reserved for delayed Efficiency idle suspension).
     pub fn set_low_memory(&self, low: bool) {
         let prev = self.low_memory.swap(low, Ordering::Relaxed);
         #[cfg(target_os = "windows")]
@@ -630,7 +645,6 @@ impl WebViewEngine {
         #[cfg(target_os = "linux")]
         {
             if low && !prev {
-                trim_webkitgtk_memory_cache(&self.webview);
                 crate::platform::trim_allocator();
             }
         }
@@ -774,6 +788,11 @@ impl WebViewEngine {
             }
             #[cfg(target_os = "linux")]
             {
+                use gtk::prelude::WidgetExt;
+                let wk = self.webview.webview();
+                if wk.is_visible() {
+                    wk.queue_draw();
+                }
                 info!("WebKitGTK resumed from Efficiency idle state");
             }
         }
@@ -1048,6 +1067,11 @@ fn apply_webkitgtk_settings(
     };
 
     let wk = webview.webview();
+    let hw_policy = if std::env::var_os("GEMINIDESK_SOFTWARE_RENDER").is_some() {
+        HardwareAccelerationPolicy::Never
+    } else {
+        HardwareAccelerationPolicy::Always
+    };
     if let Some(settings) = wk.settings() {
         // Enable media streams, persistent HTML5 storage, and allowlisted auth popups for genuine
         // Gemini features. Never spoof User-Agent or bypass Google's authentication policies.
@@ -1058,13 +1082,9 @@ fn apply_webkitgtk_settings(
         settings.set_javascript_can_access_clipboard(true);
         settings.set_javascript_can_open_windows_automatically(true);
         settings.set_enable_smooth_scrolling(true);
+        settings.set_enable_webgl(true);
+        settings.set_enable_page_cache(true);
         settings.set_enable_developer_extras(cfg!(debug_assertions));
-
-        let hw_policy = if std::env::var_os("GEMINIDESK_SOFTWARE_RENDER").is_some() {
-            HardwareAccelerationPolicy::Never
-        } else {
-            HardwareAccelerationPolicy::Always
-        };
         settings.set_hardware_acceleration_policy(hw_policy);
     }
 
@@ -1075,6 +1095,18 @@ fn apply_webkitgtk_settings(
         };
         ctx.set_cache_model(model);
     }
+
+    let webkit_ver = wry::webview_version().unwrap_or_else(|_| "unknown".to_string());
+    let dmabuf_disabled = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").ok();
+    let dmabuf_force_shm = std::env::var("WEBKIT_DMABUF_RENDERER_FORCE_SHM").ok();
+    info!(
+        %webkit_ver,
+        ?hw_policy,
+        ?perf_mode,
+        ?dmabuf_disabled,
+        ?dmabuf_force_shm,
+        "Configured WebKitGTK rendering pipeline"
+    );
 
     // Surface network/TLS/load failures during Google authentication flows so users see
     // a clean Retry + Back to Gemini bar instead of a dead error page.
