@@ -6,7 +6,8 @@ use tao::platform::windows::WindowExtWindows;
 use tao::window::Window;
 use tracing::warn;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM,
+    COLORREF, CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT,
+    POINT, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR,
@@ -14,7 +15,7 @@ use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow,
 };
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_DWORD, REG_SZ, RegCloseKey,
@@ -24,20 +25,22 @@ use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId, GetCu
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, BringWindowToTop, FindWindowW, GA_ROOTOWNER, GW_OWNER, GetAncestor,
-    GetCursorPos, GetForegroundWindow, GetWindow, GetWindowThreadProcessId, IsChild, PostMessageW,
-    SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow, WM_APP,
+    AllowSetForegroundWindow, BringWindowToTop, FindWindowW, GA_ROOTOWNER, GW_OWNER, GWL_EXSTYLE,
+    GetAncestor, GetCursorPos, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
+    GetWindowThreadProcessId, IsChild, LWA_ALPHA, PostMessageW, SW_RESTORE, SW_SHOW,
+    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, ShowWindow, WM_APP,
+    WS_EX_LAYERED,
 };
 use windows::core::PCWSTR;
 
-use super::WorkArea;
+use super::{ActivationTarget, WorkArea};
 
-/// Custom WM_APP message posted by a secondary launch to wake the primary instance.
+/// Custom WM_APP messages posted by a secondary launch to wake the primary instance.
 pub const WM_ACTIVATE_MAIN: u32 = WM_APP + 0x101;
 pub const WM_ACTIVATE_QUICK_CHAT: u32 = WM_APP + 0x102;
+pub const WM_ACTIVATE_COMPANION: u32 = WM_APP + 0x103;
+pub const WM_ACTIVATE_SETTINGS: u32 = WM_APP + 0x104;
 
-/// Unique Win32 window title prefix used to locate an already-running primary window
-/// when enforcing single-instance activation.
 pub const MAIN_WINDOW_TITLE_BASE: &str = "GeminiDesk — Unofficial Gemini Client";
 
 const SINGLE_INSTANCE_MUTEX: &str = "Local\\GeminiDesk_SingleInstance_v1";
@@ -53,7 +56,7 @@ fn to_wide_null(s: &str) -> Vec<u16> {
         .collect()
 }
 
-/// COLORREF helper: Win32 expects `0x00BBGGRR`.
+/// Win32 COLORREF uses `0x00BBGGRR`.
 const fn colorref(r: u8, g: u8, b: u8) -> u32 {
     (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
 }
@@ -97,9 +100,8 @@ pub fn is_system_dark_mode() -> bool {
     }
 }
 
-/// Applies Windows 11 immersive dark titlebar, seamless Gemini surface caption color,
-/// and native rounded corners to the main application window.
-pub fn style_main_window(window: &Window, dark: bool) {
+/// Applies Windows 11 dark/light titlebar, exact caption RGB tint, and native rounded corners.
+pub fn style_window_with_caption(window: &Window, dark: bool, caption_rgb: (u8, u8, u8)) {
     let hwnd = hwnd_of(window);
     unsafe {
         let dark_val: u32 = if dark { 1 } else { 0 };
@@ -110,12 +112,7 @@ pub fn style_main_window(window: &Window, dark: bool) {
             size_of::<u32>() as u32,
         );
 
-        // Seamless Gemini surface color: #131314 in dark mode, #ffffff in light mode.
-        let caption_color: u32 = if dark {
-            colorref(0x13, 0x13, 0x14)
-        } else {
-            colorref(0xFF, 0xFF, 0xFF)
-        };
+        let caption_color = colorref(caption_rgb.0, caption_rgb.1, caption_rgb.2);
         let _ = DwmSetWindowAttribute(
             hwnd,
             DWMWA_CAPTION_COLOR,
@@ -134,7 +131,7 @@ pub fn style_main_window(window: &Window, dark: bool) {
 }
 
 /// Applies Windows 11 floating card styling to the borderless Quick Chat window:
-/// rounded corners, subtle crisp border, and native DWM drop shadow.
+/// rounded corners, refined neutral hairline border, and native DWM drop shadow.
 pub fn style_quick_chat_window(window: &Window, dark: bool) {
     let hwnd = hwnd_of(window);
     unsafe {
@@ -155,9 +152,9 @@ pub fn style_quick_chat_window(window: &Window, dark: bool) {
         );
 
         let border_color: u32 = if dark {
-            colorref(0x3C, 0x40, 0x43)
+            colorref(0x2F, 0x2F, 0x32)
         } else {
-            colorref(0xDA, 0xDC, 0xE0)
+            colorref(0xD8, 0xD8, 0xDD)
         };
         let _ = DwmSetWindowAttribute(
             hwnd,
@@ -166,7 +163,6 @@ pub fn style_quick_chat_window(window: &Window, dark: bool) {
             size_of::<u32>() as u32,
         );
 
-        // A 1px bottom frame extension triggers native Windows 11 DWM drop shadow on borderless windows.
         let margins = MARGINS {
             cxLeftWidth: 0,
             cxRightWidth: 0,
@@ -177,34 +173,70 @@ pub fn style_quick_chat_window(window: &Window, dark: bool) {
     }
 }
 
+/// Sets per-window alpha opacity (`55..=100%`) for the Floating Companion window.
+/// Removes `WS_EX_LAYERED` when `opacity_pct >= 100` to keep full opaque DWM performance.
+pub fn set_window_opacity(window: &Window, opacity_pct: u8) {
+    let hwnd = hwnd_of(window);
+    let clamped = opacity_pct.clamp(55, 100);
+    unsafe {
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let layered_bit = WS_EX_LAYERED.0 as isize;
+        if clamped >= 100 {
+            if (ex_style & layered_bit) != 0 {
+                let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style & !layered_bit);
+            }
+        } else {
+            if (ex_style & layered_bit) == 0 {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | layered_bit);
+            }
+            let alpha = ((clamped as u16 * 255) / 100).clamp(140, 255) as u8;
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+        }
+    }
+}
+
 /// Returns the physical work area (`rcWork`) of the monitor containing the mouse cursor.
 pub fn active_monitor_work_area() -> Option<WorkArea> {
     unsafe {
         let mut pt = POINT::default();
         GetCursorPos(&mut pt).ok()?;
         let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        if hmon.is_invalid() {
-            return None;
-        }
-        let mut info = MONITORINFO {
-            cbSize: size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !GetMonitorInfoW(hmon, &mut info).as_bool() {
-            return None;
-        }
-        let rc = info.rcWork;
-        Some(WorkArea {
-            x: rc.left,
-            y: rc.top,
-            width: rc.right - rc.left,
-            height: rc.bottom - rc.top,
-        })
+        work_area_from_hmonitor(hmon)
     }
 }
 
-/// Reliably restores and focuses a window on Windows 11 even when invoked from a global hotkey
-/// while another application holds foreground focus.
+/// Returns the physical work area (`rcWork`) of the monitor containing `window`.
+pub fn monitor_work_area_for_window(window: &Window) -> Option<WorkArea> {
+    unsafe {
+        let hmon = MonitorFromWindow(hwnd_of(window), MONITOR_DEFAULTTONEAREST);
+        work_area_from_hmonitor(hmon)
+    }
+}
+
+unsafe fn work_area_from_hmonitor(
+    hmon: windows::Win32::Graphics::Gdi::HMONITOR,
+) -> Option<WorkArea> {
+    if hmon.is_invalid() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(hmon, &mut info).as_bool() } {
+        return None;
+    }
+    let rc = info.rcWork;
+    Some(WorkArea {
+        x: rc.left,
+        y: rc.top,
+        width: rc.right - rc.left,
+        height: rc.bottom - rc.top,
+    })
+}
+
+/// Reliably restores and focuses a window on Windows 11 even when invoked from a global hotkey.
 pub fn focus_window(window: &Window) {
     let hwnd = hwnd_of(window);
     unsafe {
@@ -280,7 +312,6 @@ pub fn is_window_still_active_or_owned(window: &Window) -> bool {
 }
 
 /// Registers or removes GeminiDesk from `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
-/// Uses `--minimized` so login startup sits silently in the system tray.
 pub fn set_launch_at_startup(enabled: bool) -> Result<(), String> {
     unsafe {
         let subkey = to_wide_null(RUN_SUBKEY);
@@ -370,10 +401,7 @@ impl Drop for SingleInstanceHandle {
     }
 }
 
-/// Acquires the Windows named mutex. If another GeminiDesk instance is already running,
-/// finds its main window and posts an activation message so the user sees the running app
-/// immediately instead of spawning a duplicate process.
-pub fn acquire_single_instance(activate_quick_chat: bool) -> Option<SingleInstanceHandle> {
+pub fn acquire_single_instance(target: ActivationTarget) -> Option<SingleInstanceHandle> {
     unsafe {
         let name = to_wide_null(SINGLE_INSTANCE_MUTEX);
         let handle = match CreateMutexW(None, false, PCWSTR(name.as_ptr())) {
@@ -392,10 +420,11 @@ pub fn acquire_single_instance(activate_quick_chat: bool) -> Option<SingleInstan
             if let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr()))
                 && !hwnd.0.is_null()
             {
-                let msg = if activate_quick_chat {
-                    WM_ACTIVATE_QUICK_CHAT
-                } else {
-                    WM_ACTIVATE_MAIN
+                let msg = match target {
+                    ActivationTarget::MainWindow => WM_ACTIVATE_MAIN,
+                    ActivationTarget::QuickChat => WM_ACTIVATE_QUICK_CHAT,
+                    ActivationTarget::Companion => WM_ACTIVATE_COMPANION,
+                    ActivationTarget::Settings => WM_ACTIVATE_SETTINGS,
                 };
                 let _ = PostMessageW(Some(hwnd), msg, WPARAM(0), LPARAM(0));
             }
@@ -407,10 +436,8 @@ pub fn acquire_single_instance(activate_quick_chat: bool) -> Option<SingleInstan
     }
 }
 
-const ACTIVATION_SUBCLASS_ID: usize = 0x4745_4D49; // "GEMI"
+const ACTIVATION_SUBCLASS_ID: usize = 0x4745_4D49;
 
-/// Installs a lightweight Win32 window subclass on the main window so secondary launches
-/// posting `WM_ACTIVATE_MAIN` / `WM_ACTIVATE_QUICK_CHAT` wake the primary tao event loop.
 pub fn install_activation_subclass(
     window: &Window,
     proxy: tao::event_loop::EventLoopProxy<crate::app::AppEvent>,
@@ -445,21 +472,30 @@ unsafe extern "system" fn activation_subclass_proc(
     if ref_data != 0 {
         let proxy =
             unsafe { &*(ref_data as *const tao::event_loop::EventLoopProxy<crate::app::AppEvent>) };
-        if msg == WM_ACTIVATE_MAIN {
-            let _ = proxy.send_event(crate::app::AppEvent::ShowMainWindow);
-            return LRESULT(0);
-        }
-        if msg == WM_ACTIVATE_QUICK_CHAT {
-            let _ = proxy.send_event(crate::app::AppEvent::ToggleQuickChat);
-            return LRESULT(0);
-        }
-        if msg == WM_NCDESTROY {
-            unsafe {
+        match msg {
+            WM_ACTIVATE_MAIN => {
+                let _ = proxy.send_event(crate::app::AppEvent::ShowMainWindow);
+                return LRESULT(0);
+            }
+            WM_ACTIVATE_QUICK_CHAT => {
+                let _ = proxy.send_event(crate::app::AppEvent::ToggleQuickChat);
+                return LRESULT(0);
+            }
+            WM_ACTIVATE_COMPANION => {
+                let _ = proxy.send_event(crate::app::AppEvent::ToggleCompanion);
+                return LRESULT(0);
+            }
+            WM_ACTIVATE_SETTINGS => {
+                let _ = proxy.send_event(crate::app::AppEvent::OpenSettings(None));
+                return LRESULT(0);
+            }
+            WM_NCDESTROY => unsafe {
                 let _ = RemoveWindowSubclass(hwnd, Some(activation_subclass_proc), uid_subclass);
                 drop(Box::from_raw(
                     ref_data as *mut tao::event_loop::EventLoopProxy<crate::app::AppEvent>,
                 ));
-            }
+            },
+            _ => {}
         }
     }
 

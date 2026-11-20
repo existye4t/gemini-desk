@@ -1,29 +1,45 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use global_hotkey::{GlobalHotKeyManager, hotkey::HotKey};
+use serde::Serialize;
 use tracing::{info, warn};
 
+use crate::config::AppConfig;
+
 /// Actions triggered by registered global hotkeys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyAction {
     ToggleQuickChat,
     ShowFullWindow,
+    ToggleCompanion,
+    AskSelection,
+    CaptureScreenshot,
+    ClipboardActions,
 }
 
-/// Live registration status for both global shortcuts, surfaced to Settings UI.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SingleHotkeyStatus {
+    pub registered: bool,
+    pub enabled: bool,
+    pub error: Option<String>,
+}
+
+/// Live registration status for all configurable global shortcuts, surfaced to Settings UI.
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct HotkeyStatus {
-    pub quick_chat_registered: bool,
-    pub quick_chat_error: Option<String>,
-    pub full_window_registered: bool,
-    pub full_window_error: Option<String>,
+    pub quick_chat: SingleHotkeyStatus,
+    pub full_window: SingleHotkeyStatus,
+    pub companion: SingleHotkeyStatus,
+    pub ask_selection: SingleHotkeyStatus,
+    pub screenshot: SingleHotkeyStatus,
+    pub clipboard_actions: SingleHotkeyStatus,
 }
 
-/// Manages global keyboard shortcuts with graceful conflict handling and live updates.
+/// Manages global keyboard shortcuts with graceful OS conflict handling and live updates.
 pub struct HotkeyController {
     manager: Option<GlobalHotKeyManager>,
-    quick_chat_hotkey: Option<HotKey>,
-    full_window_hotkey: Option<HotKey>,
+    registered: HashMap<u32, (HotkeyAction, HotKey)>,
     status: HotkeyStatus,
 }
 
@@ -32,18 +48,14 @@ impl HotkeyController {
         let manager = match GlobalHotKeyManager::new() {
             Ok(mgr) => Some(mgr),
             Err(err) => {
-                warn!(
-                    ?err,
-                    "GlobalHotKeyManager unavailable on this platform/session"
-                );
+                warn!(?err, "GlobalHotKeyManager unavailable in this session");
                 None
             }
         };
 
         Self {
             manager,
-            quick_chat_hotkey: None,
-            full_window_hotkey: None,
+            registered: HashMap::new(),
             status: HotkeyStatus::default(),
         }
     }
@@ -59,7 +71,7 @@ impl HotkeyController {
         if trimmed.is_empty() {
             return Ok(None);
         }
-        // Normalize common aliases so users can type `Ctrl+Alt+G` or `Control+Alt+G`.
+
         let normalized = trimmed
             .split('+')
             .map(|part| match part.trim().to_ascii_lowercase().as_str() {
@@ -78,106 +90,134 @@ impl HotkeyController {
             .map_err(|err| format!("Invalid shortcut '{trimmed}': {err}"))
     }
 
-    /// Applies updated shortcut strings, unregistering previous bindings first.
-    /// Conflicts with other OS apps (e.g. PowerToys Run on `Alt+Space`) are handled
-    /// gracefully and reported in `HotkeyStatus` without crashing.
-    pub fn apply(&mut self, quick_chat_spec: &str, full_window_spec: &str) -> HotkeyStatus {
+    /// Applies all shortcut bindings from `AppConfig`, unregistering previous bindings first.
+    /// Sensitive capture shortcuts (Selection, Screenshot, Clipboard Actions) are ONLY
+    /// registered when their corresponding opt-in feature toggle is enabled.
+    pub fn apply_from_config(&mut self, cfg: &AppConfig) -> HotkeyStatus {
         self.unregister_all();
 
-        let mut status = HotkeyStatus::default();
-        let Some(manager) = self.manager.as_ref() else {
-            let msg = "Global hotkeys are unavailable in this desktop session".to_string();
-            status.quick_chat_error = Some(msg.clone());
-            status.full_window_error = Some(msg);
-            self.status = status.clone();
-            return status;
+        let quick_chat = self.register_one(
+            HotkeyAction::ToggleQuickChat,
+            &cfg.quick_chat_shortcut,
+            true,
+        );
+        let full_window = self.register_one(
+            HotkeyAction::ShowFullWindow,
+            &cfg.full_window_shortcut,
+            true,
+        );
+        let companion =
+            self.register_one(HotkeyAction::ToggleCompanion, &cfg.companion_shortcut, true);
+        let ask_selection = self.register_one(
+            HotkeyAction::AskSelection,
+            &cfg.ask_selection_shortcut,
+            cfg.ask_selection_enabled,
+        );
+        let screenshot = self.register_one(
+            HotkeyAction::CaptureScreenshot,
+            &cfg.screenshot_shortcut,
+            cfg.screenshot_enabled,
+        );
+        let clipboard_actions = self.register_one(
+            HotkeyAction::ClipboardActions,
+            &cfg.clipboard_actions_shortcut,
+            cfg.clipboard_actions_enabled,
+        );
+
+        let status = HotkeyStatus {
+            quick_chat,
+            full_window,
+            companion,
+            ask_selection,
+            screenshot,
+            clipboard_actions,
         };
-
-        // 1. Quick Chat shortcut
-        match Self::parse_shortcut(quick_chat_spec) {
-            Ok(Some(hk)) => match manager.register(hk) {
-                Ok(()) => {
-                    info!(shortcut = %quick_chat_spec, id = hk.id(), "Registered Quick Chat hotkey");
-                    self.quick_chat_hotkey = Some(hk);
-                    status.quick_chat_registered = true;
-                }
-                Err(err) => {
-                    let msg = format!(
-                        "Could not register '{quick_chat_spec}' (likely used by another app): {err}"
-                    );
-                    warn!("{msg}");
-                    status.quick_chat_error = Some(msg);
-                }
-            },
-            Ok(None) => {
-                info!("Quick Chat global shortcut disabled");
-            }
-            Err(err) => {
-                warn!("{err}");
-                status.quick_chat_error = Some(err);
-            }
-        }
-
-        // 2. Full Window shortcut
-        match Self::parse_shortcut(full_window_spec) {
-            Ok(Some(hk)) => {
-                if self.quick_chat_hotkey.is_some_and(|q| q.id() == hk.id()) {
-                    let msg = "Full Window shortcut cannot be identical to Quick Chat shortcut"
-                        .to_string();
-                    warn!("{msg}");
-                    status.full_window_error = Some(msg);
-                } else {
-                    match manager.register(hk) {
-                        Ok(()) => {
-                            info!(
-                                shortcut = %full_window_spec,
-                                id = hk.id(),
-                                "Registered Full Window hotkey"
-                            );
-                            self.full_window_hotkey = Some(hk);
-                            status.full_window_registered = true;
-                        }
-                        Err(err) => {
-                            let msg = format!(
-                                "Could not register '{full_window_spec}' (likely used by another app): {err}"
-                            );
-                            warn!("{msg}");
-                            status.full_window_error = Some(msg);
-                        }
-                    }
-                }
-            }
-            Ok(None) => {
-                info!("Full Window global shortcut disabled");
-            }
-            Err(err) => {
-                warn!("{err}");
-                status.full_window_error = Some(err);
-            }
-        }
-
         self.status = status.clone();
         status
     }
 
+    fn register_one(
+        &mut self,
+        action: HotkeyAction,
+        spec: &str,
+        enabled: bool,
+    ) -> SingleHotkeyStatus {
+        if !enabled {
+            return SingleHotkeyStatus {
+                registered: false,
+                enabled: false,
+                error: None,
+            };
+        }
+
+        let Some(manager) = self.manager.as_ref() else {
+            return SingleHotkeyStatus {
+                registered: false,
+                enabled: true,
+                error: Some("Global hotkeys are unavailable in this desktop session".into()),
+            };
+        };
+
+        match Self::parse_shortcut(spec) {
+            Ok(Some(hk)) => {
+                if self.registered.contains_key(&hk.id()) {
+                    let msg = format!("'{spec}' is already assigned to another GeminiDesk action");
+                    warn!(?action, "{msg}");
+                    return SingleHotkeyStatus {
+                        registered: false,
+                        enabled: true,
+                        error: Some(msg),
+                    };
+                }
+                match manager.register(hk) {
+                    Ok(()) => {
+                        info!(?action, shortcut = %spec, id = hk.id(), "Registered global hotkey");
+                        self.registered.insert(hk.id(), (action, hk));
+                        SingleHotkeyStatus {
+                            registered: true,
+                            enabled: true,
+                            error: None,
+                        }
+                    }
+                    Err(err) => {
+                        let msg =
+                            format!("Conflict on '{spec}' (likely in use by another app): {err}");
+                        warn!(?action, "{msg}");
+                        SingleHotkeyStatus {
+                            registered: false,
+                            enabled: true,
+                            error: Some(msg),
+                        }
+                    }
+                }
+            }
+            Ok(None) => SingleHotkeyStatus {
+                registered: false,
+                enabled: true,
+                error: None,
+            },
+            Err(err) => {
+                warn!(?action, "{err}");
+                SingleHotkeyStatus {
+                    registered: false,
+                    enabled: true,
+                    error: Some(err),
+                }
+            }
+        }
+    }
+
     pub fn action_for_id(&self, id: u32) -> Option<HotkeyAction> {
-        if self.quick_chat_hotkey.is_some_and(|hk| hk.id() == id) {
-            return Some(HotkeyAction::ToggleQuickChat);
-        }
-        if self.full_window_hotkey.is_some_and(|hk| hk.id() == id) {
-            return Some(HotkeyAction::ShowFullWindow);
-        }
-        None
+        self.registered.get(&id).map(|(action, _)| *action)
     }
 
     pub fn unregister_all(&mut self) {
         if let Some(manager) = self.manager.as_ref() {
-            if let Some(hk) = self.quick_chat_hotkey.take() {
+            for (_, (_, hk)) in self.registered.drain() {
                 let _ = manager.unregister(hk);
             }
-            if let Some(hk) = self.full_window_hotkey.take() {
-                let _ = manager.unregister(hk);
-            }
+        } else {
+            self.registered.clear();
         }
     }
 }
@@ -200,7 +240,11 @@ mod tests {
         let f = HotkeyController::parse_shortcut("Alt+Shift+Space")
             .expect("Alt+Shift+Space valid")
             .expect("Some hotkey");
+        let s = HotkeyController::parse_shortcut("Alt+Shift+S")
+            .expect("Alt+Shift+S valid")
+            .expect("Some hotkey");
         assert_ne!(q.id(), f.id());
+        assert_ne!(f.id(), s.id());
 
         assert!(
             HotkeyController::parse_shortcut("Ctrl+Alt+G")
