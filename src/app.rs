@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
@@ -13,53 +13,105 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use wry::WebContext;
 
 use crate::config::{
-    self, AppConfig, AppPaths, AppState, CloseBehavior, WindowGeometry, clear_safe_cache,
-    compute_cache_size_bytes, load_config, load_state, save_config, save_state,
+    self, AppConfig, AppPaths, AppState, CloseBehavior, PerformanceMode, ThemePreference,
+    WindowGeometry, clear_safe_cache, compute_cache_size_bytes, default_clipboard_templates,
+    load_config, load_state, save_config, save_state,
 };
 use crate::hotkeys::{HotkeyAction, HotkeyController};
 use crate::icon;
-use crate::platform;
+use crate::performance::PerformanceSampler;
+use crate::platform::{self, ActivationTarget};
+use crate::productivity::CaptureSource;
+use crate::productivity::action_window::{ActionIpcMessage, ActionPanelContent, ActionWindow};
+use crate::productivity::clipboard::{self, ClipboardText};
+use crate::productivity::screenshot::{self, CaptureOutcome};
+use crate::productivity::selection::{self, SelectionOutcome};
 use crate::settings_window::{SettingsIpcMessage, SettingsWindow};
 use crate::tray::{
-    MENU_NEW_CHAT, MENU_OPEN_GEMINI, MENU_QUICK_CHAT, MENU_QUIT, MENU_SETTINGS, TrayController,
+    MENU_CAPTURE_SCREENSHOT, MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT,
+    MENU_OPEN_GEMINI, MENU_QUICK_CHAT, MENU_QUIT, MENU_SETTINGS, TrayController,
 };
-use crate::webview::WebViewEngine;
+use crate::webview::{
+    HOST_COMPANION, HOST_MAIN, HOST_QUICK_CHAT, WebViewEngine, runtime_version_string,
+};
 
 const MAIN_WINDOW_TITLE: &str = "GeminiDesk — Unofficial Gemini Client";
 const QUICK_CHAT_TITLE: &str = "GeminiDesk Quick Chat";
+const COMPANION_TITLE: &str = "GeminiDesk Companion";
 const BLUR_GRACE_PERIOD: Duration = Duration::from_millis(300);
+const SNAP_THRESHOLD_PX: i32 = 22;
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct LaunchOptions {
     pub start_minimized: bool,
     pub start_quick_chat: bool,
+    pub start_companion: bool,
+    pub open_settings_tab: Option<String>,
     pub open_settings: bool,
+    pub open_clipboard_actions: bool,
+    pub preview_theme: Option<ThemePreference>,
 }
 
 impl LaunchOptions {
     pub fn from_env() -> Self {
         let mut opts = Self::default();
         for arg in std::env::args().skip(1) {
-            match arg.as_str() {
-                "--minimized" | "--tray" => opts.start_minimized = true,
-                "--quick-chat" => opts.start_quick_chat = true,
-                "--settings" => opts.open_settings = true,
-                _ => {}
+            if arg == "--minimized" || arg == "--tray" {
+                opts.start_minimized = true;
+            } else if arg == "--quick-chat" {
+                opts.start_quick_chat = true;
+            } else if arg == "--companion" {
+                opts.start_companion = true;
+            } else if arg == "--settings" {
+                opts.open_settings = true;
+            } else if let Some(tab) = arg.strip_prefix("--settings=") {
+                opts.open_settings = true;
+                opts.open_settings_tab = Some(tab.to_string());
+            } else if arg == "--clipboard-actions" {
+                opts.open_clipboard_actions = true;
+            } else if let Some(th) = arg.strip_prefix("--preview-theme=") {
+                opts.preview_theme = match th {
+                    "dark" => Some(ThemePreference::Dark),
+                    "light" => Some(ThemePreference::Light),
+                    "system" => Some(ThemePreference::System),
+                    _ => None,
+                };
             }
         }
         opts
     }
+
+    fn activation_target(&self) -> ActivationTarget {
+        if self.start_quick_chat {
+            ActivationTarget::QuickChat
+        } else if self.start_companion {
+            ActivationTarget::Companion
+        } else if self.open_settings {
+            ActivationTarget::Settings
+        } else {
+            ActivationTarget::MainWindow
+        }
+    }
 }
 
-/// Application-wide event bus driven entirely by OS callbacks (zero polling).
+/// Application-wide event bus driven entirely by OS callbacks (zero background polling).
 #[derive(Debug)]
 pub enum AppEvent {
     ShowMainWindow,
     ToggleQuickChat,
     HideQuickChat,
+    ToggleCompanion,
+    ToggleCompanionAlwaysOnTop,
     NewChat,
-    OpenSettings,
+    OpenSettings(Option<String>),
     SettingsIpc(SettingsIpcMessage),
+    ActionIpc(ActionIpcMessage),
+    InvokeAskSelection,
+    SelectionCaptured(SelectionOutcome),
+    InvokeScreenshot,
+    ScreenshotCaptured(CaptureOutcome),
+    InvokeClipboardActions,
+    EvaluateIdleSuspend(u64),
     HotkeyPressed(u32),
     TrayMenu(String),
     TrayLeftClick,
@@ -71,6 +123,7 @@ pub enum AppEvent {
 enum ActiveHost {
     Main,
     QuickChat,
+    Companion,
 }
 
 struct DesktopApp {
@@ -79,24 +132,53 @@ struct DesktopApp {
     state: AppState,
     main_window: Window,
     quick_chat_window: Window,
+    companion_window: Window,
     web_context: WebContext,
     engine: WebViewEngine,
     active_host: ActiveHost,
-    in_quick_chat: Arc<AtomicBool>,
+    active_host_mode: Arc<AtomicU8>,
     last_quick_chat_shown: Option<Instant>,
+    snapping_companion: bool,
+    background_gen: Arc<AtomicU64>,
     hotkeys: HotkeyController,
     tray: Option<TrayController>,
     settings_window: Option<SettingsWindow>,
+    action_window: Option<ActionWindow>,
+    perf_sampler: PerformanceSampler,
     effective_dark: bool,
-    last_normal_geometry: Option<WindowGeometry>,
+    last_main_geometry: Option<WindowGeometry>,
+    last_companion_geometry: Option<WindowGeometry>,
+    startup_clock: Instant,
+    first_title_logged: bool,
     proxy: tao::event_loop::EventLoopProxy<AppEvent>,
 }
 
 impl DesktopApp {
+    fn bump_background_gen(&self) -> u64 {
+        self.background_gen.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn any_gemini_window_visible(&self) -> bool {
+        self.main_window.is_visible()
+            || self.quick_chat_window.is_visible()
+            || self.companion_window.is_visible()
+    }
+
+    fn wake_engine(&self) {
+        self.bump_background_gen();
+        self.engine.resume_if_suspended();
+        self.engine.set_low_memory(false);
+        self.engine.set_visible(true);
+    }
+
     fn show_main_window(&mut self) {
         let t0 = Instant::now();
         if self.quick_chat_window.is_visible() {
             self.quick_chat_window.set_visible(false);
+        }
+        if self.companion_window.is_visible() {
+            self.capture_companion_geometry();
+            self.companion_window.set_visible(false);
         }
 
         if self.active_host != ActiveHost::Main {
@@ -104,16 +186,16 @@ impl DesktopApp {
                 error!(?err, "Failed to reparent WebView to main window");
             } else {
                 self.active_host = ActiveHost::Main;
-                self.in_quick_chat.store(false, Ordering::Relaxed);
+                self.active_host_mode.store(HOST_MAIN, Ordering::Relaxed);
             }
         }
 
-        self.engine.set_low_memory(false);
-        self.engine.set_visible(true);
+        self.wake_engine();
         if self.main_window.is_minimized() {
             self.main_window.set_minimized(false);
         }
         self.main_window.set_visible(true);
+        self.engine.sync_bounds_to_window(&self.main_window);
         platform::focus_window(&self.main_window);
         self.engine.focus();
 
@@ -131,30 +213,43 @@ impl DesktopApp {
             self.capture_main_geometry();
             self.main_window.set_visible(false);
         }
+        if self.companion_window.is_visible() {
+            self.capture_companion_geometry();
+            self.companion_window.set_visible(false);
+        }
 
         let work_area = platform::active_monitor_work_area(&self.main_window);
         let scale = platform::monitor_scale_for_work_area(&self.main_window, work_area);
-        let (x, y, w, h) = platform::compute_quick_chat_rect(work_area, scale);
+        let (x, y, w, h) = platform::compute_quick_chat_rect(
+            work_area,
+            scale,
+            self.config.quick_chat_width,
+            self.config.quick_chat_height,
+            self.config.quick_chat_position,
+        );
 
         self.quick_chat_window
             .set_outer_position(PhysicalPosition::new(x, y));
         self.quick_chat_window
             .set_inner_size(PhysicalSize::new(w, h));
 
-        if self.active_host != ActiveHost::QuickChat {
+        let switched_host = self.active_host != ActiveHost::QuickChat;
+        if switched_host {
             if let Err(err) = self.engine.attach_to_window(&self.quick_chat_window) {
                 error!(?err, "Failed to reparent WebView to Quick Chat window");
             } else {
                 self.active_host = ActiveHost::QuickChat;
-                self.in_quick_chat.store(true, Ordering::Relaxed);
+                self.active_host_mode
+                    .store(HOST_QUICK_CHAT, Ordering::Relaxed);
             }
         }
 
-        self.engine.set_low_memory(false);
-        self.engine.set_visible(true);
+        self.wake_engine();
         self.quick_chat_window.set_visible(true);
+        self.engine.sync_bounds_to_window(&self.quick_chat_window);
         platform::focus_window(&self.quick_chat_window);
         self.engine.focus();
+        self.engine.focus_composer_for_quick_chat();
 
         info!(
             x,
@@ -171,7 +266,6 @@ impl DesktopApp {
             return;
         }
         self.quick_chat_window.set_visible(false);
-        self.in_quick_chat.store(false, Ordering::Relaxed);
         self.enter_background_state();
         info!("Quick Chat hidden");
     }
@@ -184,6 +278,92 @@ impl DesktopApp {
         }
     }
 
+    fn show_companion(&mut self) {
+        let t0 = Instant::now();
+        if self.main_window.is_visible() {
+            self.capture_main_geometry();
+            self.main_window.set_visible(false);
+        }
+        if self.quick_chat_window.is_visible() {
+            self.quick_chat_window.set_visible(false);
+        }
+
+        // If no persisted companion geometry exists yet, dock neatly on the right side of the active display.
+        if self.last_companion_geometry.is_none() {
+            let area = platform::active_monitor_work_area(&self.main_window);
+            let scale = platform::monitor_scale_for_work_area(&self.main_window, area);
+            let (x, y, w, h) = platform::default_companion_rect(area, scale);
+            self.companion_window
+                .set_inner_size(PhysicalSize::new(w, h));
+            self.companion_window
+                .set_outer_position(PhysicalPosition::new(x, y));
+        }
+
+        if self.active_host != ActiveHost::Companion {
+            if let Err(err) = self.engine.attach_to_window(&self.companion_window) {
+                error!(?err, "Failed to reparent WebView to Floating Companion");
+            } else {
+                self.active_host = ActiveHost::Companion;
+                self.active_host_mode
+                    .store(HOST_COMPANION, Ordering::Relaxed);
+            }
+        }
+
+        self.companion_window
+            .set_always_on_top(self.config.companion_always_on_top);
+        platform::set_window_opacity(&self.companion_window, self.config.companion_opacity);
+        self.wake_engine();
+        if self.companion_window.is_minimized() {
+            self.companion_window.set_minimized(false);
+        }
+        self.companion_window.set_visible(true);
+        self.engine.sync_bounds_to_window(&self.companion_window);
+        platform::focus_window(&self.companion_window);
+        self.engine.focus();
+
+        info!(
+            always_on_top = self.config.companion_always_on_top,
+            opacity = self.config.companion_opacity,
+            elapsed_ms = t0.elapsed().as_millis(),
+            "Floating Companion shown and focused"
+        );
+    }
+
+    fn hide_companion(&mut self) {
+        if !self.companion_window.is_visible() {
+            return;
+        }
+        self.capture_companion_geometry();
+        self.persist_state();
+        self.companion_window.set_visible(false);
+        self.enter_background_state();
+        info!("Floating Companion hidden");
+    }
+
+    fn toggle_companion(&mut self) {
+        if self.active_host == ActiveHost::Companion && self.companion_window.is_visible() {
+            self.hide_companion();
+        } else {
+            self.show_companion();
+        }
+    }
+
+    fn toggle_companion_always_on_top(&mut self) {
+        self.config.companion_always_on_top = !self.config.companion_always_on_top;
+        self.companion_window
+            .set_always_on_top(self.config.companion_always_on_top);
+        let _ = save_config(&self.paths.config_file(), &self.config);
+        info!(
+            always_on_top = self.config.companion_always_on_top,
+            "Toggled Floating Companion Always on Top"
+        );
+        self.push_settings_state(Some(if self.config.companion_always_on_top {
+            "Companion pinned on top".into()
+        } else {
+            "Companion unpinned".into()
+        }));
+    }
+
     fn hide_main_to_tray(&mut self) {
         self.capture_main_geometry();
         self.persist_state();
@@ -193,17 +373,51 @@ impl DesktopApp {
     }
 
     fn enter_background_state(&self) {
-        if !self.main_window.is_visible() && !self.quick_chat_window.is_visible() {
-            self.engine.set_visible(false);
-            if self.config.reduce_memory_when_hidden {
+        if self.any_gemini_window_visible() {
+            return;
+        }
+
+        self.engine.set_visible(false);
+
+        match self.config.performance_mode {
+            PerformanceMode::Performance => {
+                self.engine.set_low_memory(false);
+            }
+            PerformanceMode::Balanced => {
                 self.engine.set_low_memory(true);
+            }
+            PerformanceMode::Efficiency => {
+                self.engine.set_low_memory(true);
+                let generation = self.bump_background_gen();
+                let delay = Duration::from_secs(self.config.efficiency_suspend_delay_secs as u64);
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(delay);
+                    let _ = proxy.send_event(AppEvent::EvaluateIdleSuspend(generation));
+                });
             }
         }
     }
 
-    fn open_or_focus_settings(&mut self, target: &EventLoopWindowTarget<AppEvent>) {
-        if let Some(settings) = &self.settings_window {
-            settings.focus();
+    fn handle_evaluate_idle_suspend(&self, expected_gen: u64) {
+        if self.config.performance_mode != PerformanceMode::Efficiency {
+            return;
+        }
+        if self.any_gemini_window_visible() {
+            return;
+        }
+        if self.background_gen.load(Ordering::SeqCst) == expected_gen {
+            self.engine.try_suspend();
+        }
+    }
+
+    fn open_or_focus_settings(
+        &mut self,
+        target: &EventLoopWindowTarget<AppEvent>,
+        initial_tab: Option<String>,
+    ) {
+        if let Some(settings) = &mut self.settings_window {
+            settings.focus_with_tab(initial_tab);
             self.push_settings_state(None);
             return;
         }
@@ -212,6 +426,7 @@ impl DesktopApp {
             target,
             &mut self.web_context,
             self.effective_dark,
+            initial_tab,
             self.proxy.clone(),
         ) {
             Ok(win) => {
@@ -223,8 +438,8 @@ impl DesktopApp {
         }
     }
 
-    fn push_settings_state(&self, toast: Option<String>) {
-        if let Some(settings) = &self.settings_window {
+    fn push_settings_state(&mut self, toast: Option<String>) {
+        if let Some(settings) = &mut self.settings_window {
             let cache_bytes = compute_cache_size_bytes(&self.paths.webview_data_dir);
             settings.push_state(
                 &self.config,
@@ -237,8 +452,42 @@ impl DesktopApp {
         }
     }
 
+    fn open_action_window(
+        &mut self,
+        target: &EventLoopWindowTarget<AppEvent>,
+        content: ActionPanelContent,
+    ) {
+        // Drop any prior sheet so only one utility panel exists at a time.
+        self.action_window = None;
+        match ActionWindow::open(
+            target,
+            &mut self.web_context,
+            self.effective_dark,
+            content,
+            self.proxy.clone(),
+        ) {
+            Ok(win) => {
+                self.action_window = Some(win);
+            }
+            Err(err) => {
+                error!("{err}");
+            }
+        }
+    }
+
+    fn focus_active_gemini_for_handoff(&mut self) {
+        if self.main_window.is_visible() {
+            self.show_main_window();
+        } else if self.companion_window.is_visible() {
+            self.show_companion();
+        } else {
+            self.show_quick_chat();
+        }
+    }
+
     fn apply_config_update(&mut self, mut new_cfg: AppConfig) {
-        let mut toast = Some("Settings saved".to_string());
+        new_cfg.sanitize();
+        let mut toast = Some("Saved".to_string());
 
         // 1. OS startup registration
         if new_cfg.launch_at_startup != self.config.launch_at_startup
@@ -249,33 +498,53 @@ impl DesktopApp {
             toast = Some(err);
         }
 
-        // 2. Global shortcuts (re-register if changed)
-        if new_cfg.quick_chat_shortcut != self.config.quick_chat_shortcut
+        // 2. Global shortcuts (re-register whenever shortcuts or opt-in capture toggles change)
+        let shortcuts_changed = new_cfg.quick_chat_shortcut != self.config.quick_chat_shortcut
             || new_cfg.full_window_shortcut != self.config.full_window_shortcut
-        {
-            self.hotkeys
-                .apply(&new_cfg.quick_chat_shortcut, &new_cfg.full_window_shortcut);
+            || new_cfg.companion_shortcut != self.config.companion_shortcut
+            || new_cfg.ask_selection_shortcut != self.config.ask_selection_shortcut
+            || new_cfg.screenshot_shortcut != self.config.screenshot_shortcut
+            || new_cfg.clipboard_actions_shortcut != self.config.clipboard_actions_shortcut
+            || new_cfg.ask_selection_enabled != self.config.ask_selection_enabled
+            || new_cfg.screenshot_enabled != self.config.screenshot_enabled
+            || new_cfg.clipboard_actions_enabled != self.config.clipboard_actions_enabled;
+
+        if shortcuts_changed {
+            self.hotkeys.apply_from_config(&new_cfg);
             if let Some(tray) = &self.tray {
-                tray.update_quick_chat_shortcut(&new_cfg.quick_chat_shortcut);
+                tray.sync_labels(&new_cfg);
             }
         }
 
         // 3. Theme updates
         if new_cfg.theme != self.config.theme {
             self.effective_dark = platform::resolve_is_dark(new_cfg.theme);
-            platform::style_main_window(&self.main_window, self.effective_dark);
-            platform::style_quick_chat_window(&self.quick_chat_window, self.effective_dark);
-            self.engine.apply_theme(new_cfg.theme, self.effective_dark);
-            if let Some(settings) = &self.settings_window {
-                settings.apply_theme(self.effective_dark);
-            }
+            self.apply_theme_to_all_windows(new_cfg.theme);
         }
 
-        // 4. Memory reduction preference
-        if !new_cfg.reduce_memory_when_hidden {
-            self.engine.set_low_memory(false);
-        } else if !self.main_window.is_visible() && !self.quick_chat_window.is_visible() {
-            self.engine.set_low_memory(true);
+        // 4. Companion live properties
+        if new_cfg.companion_always_on_top != self.config.companion_always_on_top {
+            self.companion_window
+                .set_always_on_top(new_cfg.companion_always_on_top);
+        }
+        if new_cfg.companion_opacity != self.config.companion_opacity {
+            platform::set_window_opacity(&self.companion_window, new_cfg.companion_opacity);
+        }
+
+        // 5. Performance mode live update
+        if new_cfg.performance_mode != self.config.performance_mode {
+            match new_cfg.performance_mode {
+                PerformanceMode::Performance => {
+                    self.bump_background_gen();
+                    self.engine.resume_if_suspended();
+                    self.engine.set_low_memory(false);
+                }
+                PerformanceMode::Balanced | PerformanceMode::Efficiency => {
+                    if !self.any_gemini_window_visible() {
+                        self.engine.set_low_memory(true);
+                    }
+                }
+            }
         }
 
         self.config = new_cfg;
@@ -287,6 +556,16 @@ impl DesktopApp {
         self.push_settings_state(toast);
     }
 
+    fn apply_theme_to_all_windows(&self, pref: ThemePreference) {
+        platform::style_main_window(&self.main_window, self.effective_dark);
+        platform::style_main_window(&self.companion_window, self.effective_dark);
+        platform::style_quick_chat_window(&self.quick_chat_window, self.effective_dark);
+        self.engine.apply_theme(pref, self.effective_dark);
+        if let Some(settings) = &self.settings_window {
+            settings.apply_theme(self.effective_dark);
+        }
+    }
+
     fn capture_main_geometry(&mut self) {
         if self.main_window.is_minimized() {
             return;
@@ -295,7 +574,7 @@ impl DesktopApp {
         if !maximized && let Ok(pos) = self.main_window.outer_position() {
             let size = self.main_window.inner_size();
             if size.width >= 320 && size.height >= 320 {
-                self.last_normal_geometry = Some(WindowGeometry {
+                self.last_main_geometry = Some(WindowGeometry {
                     x: pos.x,
                     y: pos.y,
                     width: size.width,
@@ -304,9 +583,57 @@ impl DesktopApp {
                 });
             }
         }
-        if let Some(mut geom) = self.last_normal_geometry {
+        if let Some(mut geom) = self.last_main_geometry {
             geom.maximized = maximized;
             self.state.main_window = Some(geom);
+        }
+    }
+
+    fn capture_companion_geometry(&mut self) {
+        if self.companion_window.is_minimized() {
+            return;
+        }
+        if let Ok(pos) = self.companion_window.outer_position() {
+            let size = self.companion_window.inner_size();
+            if size.width >= 300 && size.height >= 300 {
+                let geom = WindowGeometry {
+                    x: pos.x,
+                    y: pos.y,
+                    width: size.width,
+                    height: size.height,
+                    maximized: false,
+                };
+                self.last_companion_geometry = Some(geom);
+                self.state.companion_window = Some(geom);
+            }
+        }
+    }
+
+    fn snap_companion_if_needed(&mut self) {
+        if !self.config.companion_snap_to_edges
+            || self.snapping_companion
+            || !self.companion_window.is_visible()
+            || self.companion_window.is_minimized()
+        {
+            return;
+        }
+        let Ok(pos) = self.companion_window.outer_position() else {
+            return;
+        };
+        let outer = self.companion_window.outer_size();
+        let area = platform::work_area_for_window(&self.companion_window);
+        if let Some((nx, ny)) = platform::snap_position_to_work_area(
+            pos.x,
+            pos.y,
+            outer.width as i32,
+            outer.height as i32,
+            area,
+            SNAP_THRESHOLD_PX,
+        ) {
+            self.snapping_companion = true;
+            self.companion_window
+                .set_outer_position(PhysicalPosition::new(nx, ny));
+            self.snapping_companion = false;
         }
     }
 
@@ -317,9 +644,12 @@ impl DesktopApp {
     }
 
     fn shutdown(&mut self) {
+        self.bump_background_gen();
         self.capture_main_geometry();
+        self.capture_companion_geometry();
         self.persist_state();
         self.hotkeys.unregister_all();
+        self.action_window = None;
         self.settings_window = None;
         self.tray = None;
         info!("GeminiDesk shutting down cleanly");
@@ -329,29 +659,31 @@ impl DesktopApp {
 pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     let startup_clock = Instant::now();
 
-    let Some(_instance_guard) = platform::acquire_single_instance(options.start_quick_chat) else {
+    let Some(_instance_guard) = platform::acquire_single_instance(options.activation_target())
+    else {
         info!("Existing GeminiDesk instance signaled; exiting secondary process");
         return Ok(());
     };
 
     let paths = AppPaths::resolve();
     let mut cfg = load_config(&paths.config_file());
-    // Keep startup checkbox in sync with the actual OS registry/autostart state.
     cfg.launch_at_startup = platform::is_launch_at_startup_enabled();
     let state = load_state(&paths.state_file());
-    let effective_dark = platform::resolve_is_dark(cfg.theme);
+    let theme_for_session = options.preview_theme.unwrap_or(cfg.theme);
+    let effective_dark = platform::resolve_is_dark(theme_for_session);
 
     info!(
         version = env!("CARGO_PKG_VERSION"),
         data_dir = %paths.webview_data_dir.display(),
         dark = effective_dark,
+        perf_mode = ?cfg.performance_mode,
         "Starting GeminiDesk"
     );
 
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // Wire zero-polling push event handlers before creating tray/hotkeys.
+    // Zero-polling push-based OS callbacks.
     {
         let p = proxy.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -382,7 +714,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     let app_icon = icon::window_icon();
 
-    // 1. Main Window (created hidden until WebView2 is attached to prevent any white flash)
+    // 1. Main Window
     let mut main_wb = WindowBuilder::new()
         .with_title(MAIN_WINDOW_TITLE)
         .with_inner_size(LogicalSize::new(1220.0, 840.0))
@@ -393,9 +725,8 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
     let main_window = main_wb.build(&event_loop)?;
 
-    // Restore persisted window geometry if still visible on a connected monitor.
     let mut restored_maximized = false;
-    let mut last_normal_geometry = None;
+    let mut last_main_geometry = None;
     if let Some(geom) = state.main_window
         && platform::is_geometry_on_any_monitor(
             &main_window,
@@ -408,18 +739,21 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         main_window.set_inner_size(PhysicalSize::new(geom.width, geom.height));
         main_window.set_outer_position(PhysicalPosition::new(geom.x, geom.y));
         restored_maximized = geom.maximized;
-        last_normal_geometry = Some(geom);
+        last_main_geometry = Some(geom);
     }
 
-    // 2. Quick Chat Spotlight Window (pre-created hidden HWND -> ~15-25ms instant summon)
+    // 2. Quick Chat Spotlight Window (pre-created hidden HWND -> ~15-24ms instant summon)
     let mut quick_wb = WindowBuilder::new()
         .with_title(QUICK_CHAT_TITLE)
-        .with_inner_size(LogicalSize::new(760.0, 580.0))
+        .with_inner_size(LogicalSize::new(
+            cfg.quick_chat_width as f64,
+            cfg.quick_chat_height as f64,
+        ))
         .with_resizable(false)
         .with_decorations(false)
         .with_always_on_top(true)
         .with_visible(false);
-    if let Some(ic) = app_icon {
+    if let Some(ic) = app_icon.clone() {
         quick_wb = quick_wb.with_window_icon(Some(ic));
     }
     #[cfg(target_os = "windows")]
@@ -429,27 +763,67 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
     let quick_chat_window = quick_wb.build(&event_loop)?;
 
-    // Style both native windows BEFORE displaying them.
+    // 3. Persistent Floating Companion Window (pre-created hidden HWND -> shares single WebView)
+    let mut comp_wb = WindowBuilder::new()
+        .with_title(COMPANION_TITLE)
+        .with_inner_size(LogicalSize::new(490.0, 700.0))
+        .with_min_inner_size(LogicalSize::new(380.0, 440.0))
+        .with_always_on_top(cfg.companion_always_on_top)
+        .with_visible(false);
+    if let Some(ic) = app_icon {
+        comp_wb = comp_wb.with_window_icon(Some(ic));
+    }
+    let companion_window = comp_wb.build(&event_loop)?;
+
+    let mut last_companion_geometry = None;
+    if let Some(geom) = state.companion_window
+        && platform::is_geometry_on_any_monitor(
+            &companion_window,
+            geom.x,
+            geom.y,
+            geom.width,
+            geom.height,
+        )
+    {
+        companion_window.set_inner_size(PhysicalSize::new(geom.width, geom.height));
+        companion_window.set_outer_position(PhysicalPosition::new(geom.x, geom.y));
+        last_companion_geometry = Some(geom);
+    }
+
+    // Style all three native windows BEFORE displaying any of them (zero white flash).
     platform::style_main_window(&main_window, effective_dark);
+    platform::style_main_window(&companion_window, effective_dark);
     platform::style_quick_chat_window(&quick_chat_window, effective_dark);
+    platform::set_window_opacity(&companion_window, cfg.companion_opacity);
 
     #[cfg(target_os = "windows")]
     platform::windows::install_activation_subclass(&main_window, proxy.clone());
 
-    // 3. Shared WebContext preserving Phase B Google authentication profile
+    info!(
+        elapsed_ms = startup_clock.elapsed().as_millis(),
+        "Startup phase: native windows ready"
+    );
+
+    // 4. Shared WebContext preserving existing Google sign-in profile
     let mut web_context = WebContext::new(Some(paths.webview_data_dir.clone()));
-    let in_quick_chat = Arc::new(AtomicBool::new(false));
+    let active_host_mode = Arc::new(AtomicU8::new(HOST_MAIN));
     let engine = WebViewEngine::new(
         &main_window,
         &mut web_context,
-        cfg.theme,
+        theme_for_session,
         effective_dark,
-        Arc::clone(&in_quick_chat),
+        Arc::clone(&active_host_mode),
+        startup_clock,
         proxy.clone(),
     )?;
 
-    // 4. Persistent system tray & global shortcuts
-    let tray = match TrayController::new(&cfg.quick_chat_shortcut) {
+    info!(
+        elapsed_ms = startup_clock.elapsed().as_millis(),
+        "Startup phase: WebView2 initialized"
+    );
+
+    // 5. Tray & Global Shortcuts
+    let tray = match TrayController::new(&cfg) {
         Ok(t) => Some(t),
         Err(err) => {
             warn!(?err, "System tray unavailable");
@@ -458,7 +832,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut hotkeys = HotkeyController::new();
-    hotkeys.apply(&cfg.quick_chat_shortcut, &cfg.full_window_shortcut);
+    hotkeys.apply_from_config(&cfg);
 
     let mut app = DesktopApp {
         paths,
@@ -466,20 +840,28 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         state,
         main_window,
         quick_chat_window,
+        companion_window,
         web_context,
         engine,
         active_host: ActiveHost::Main,
-        in_quick_chat,
+        active_host_mode,
         last_quick_chat_shown: None,
+        snapping_companion: false,
+        background_gen: Arc::new(AtomicU64::new(0)),
         hotkeys,
         tray,
         settings_window: None,
+        action_window: None,
+        perf_sampler: PerformanceSampler::new(),
         effective_dark,
-        last_normal_geometry,
+        last_main_geometry,
+        last_companion_geometry,
+        startup_clock,
+        first_title_logged: false,
         proxy: proxy.clone(),
     };
 
-    // 5. Initial window presentation
+    // 6. Initial window presentation
     if options.start_minimized {
         app.enter_background_state();
         info!(
@@ -491,6 +873,12 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         info!(
             init_ms = startup_clock.elapsed().as_millis(),
             "Started directly into Quick Chat"
+        );
+    } else if options.start_companion {
+        app.show_companion();
+        info!(
+            init_ms = startup_clock.elapsed().as_millis(),
+            "Started directly into Floating Companion"
         );
     } else {
         if restored_maximized {
@@ -506,10 +894,12 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if options.open_settings {
-        let _ = proxy.send_event(AppEvent::OpenSettings);
+        let _ = proxy.send_event(AppEvent::OpenSettings(options.open_settings_tab));
+    }
+    if options.open_clipboard_actions {
+        let _ = proxy.send_event(AppEvent::InvokeClipboardActions);
     }
 
-    // Keep single-instance guard alive until the event loop exits.
     let mut guard = Some(_instance_guard);
 
     event_loop.run(move |event, target, control_flow| {
@@ -520,24 +910,41 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::ShowMainWindow => app.show_main_window(),
                 AppEvent::ToggleQuickChat => app.toggle_quick_chat(),
                 AppEvent::HideQuickChat => app.hide_quick_chat(),
+                AppEvent::ToggleCompanion => app.toggle_companion(),
+                AppEvent::ToggleCompanionAlwaysOnTop => app.toggle_companion_always_on_top(),
                 AppEvent::NewChat => {
-                    if !app.main_window.is_visible() && !app.quick_chat_window.is_visible() {
+                    if !app.any_gemini_window_visible() {
                         app.show_main_window();
                     }
                     app.engine.load_new_chat();
                     app.engine.focus();
                 }
-                AppEvent::OpenSettings => app.open_or_focus_settings(target),
+                AppEvent::OpenSettings(tab) => app.open_or_focus_settings(target, tab),
                 AppEvent::SettingsIpc(msg) => match msg {
                     SettingsIpcMessage::Ready => app.push_settings_state(None),
                     SettingsIpcMessage::SaveConfig { config: new_cfg } => {
-                        app.apply_config_update(new_cfg);
+                        app.apply_config_update(*new_cfg);
+                    }
+                    SettingsIpcMessage::ResetTemplates => {
+                        let mut updated = app.config.clone();
+                        updated.clipboard_templates = default_clipboard_templates();
+                        app.apply_config_update(updated);
+                    }
+                    SettingsIpcMessage::RequestMetrics => {
+                        if let Some(settings) = &app.settings_window {
+                            let metrics = app.perf_sampler.sample(
+                                app.engine.is_low_memory(),
+                                app.engine.is_suspended(),
+                                runtime_version_string(),
+                            );
+                            settings.push_metrics(&metrics);
+                        }
                     }
                     SettingsIpcMessage::ClearCache => {
                         let freed = clear_safe_cache(&app.paths.webview_data_dir);
                         let mb = freed as f64 / (1024.0 * 1024.0);
                         app.push_settings_state(Some(format!(
-                            "Cleared {mb:.1} MB of cache (Google sign-in preserved)"
+                            "Cleared {mb:.1} MB cache (Google sign-in preserved)"
                         )));
                     }
                     SettingsIpcMessage::OpenProfileFolder => {
@@ -547,20 +954,186 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     SettingsIpcMessage::Close => {
                         app.settings_window = None;
+                        app.perf_sampler.reset();
                     }
                 },
+                AppEvent::InvokeAskSelection => {
+                    let allow_fallback = app.config.ask_selection_clipboard_fallback;
+                    let max_chars = app.config.clipboard_max_chars;
+                    let p = app.proxy.clone();
+                    std::thread::spawn(move || {
+                        let outcome =
+                            selection::capture_foreground_selection(allow_fallback, max_chars);
+                        let _ = p.send_event(AppEvent::SelectionCaptured(outcome));
+                    });
+                }
+                AppEvent::SelectionCaptured(outcome) => {
+                    let (captured_text, source, truncated) = match outcome {
+                        SelectionOutcome::Captured {
+                            text,
+                            source,
+                            truncated,
+                        } => (text, source, truncated),
+                        SelectionOutcome::ProtectedField => {
+                            (String::new(), CaptureSource::ProtectedField, false)
+                        }
+                        SelectionOutcome::Unavailable => {
+                            (String::new(), CaptureSource::ManualFallback, false)
+                        }
+                    };
+                    app.open_action_window(
+                        target,
+                        ActionPanelContent::Selection {
+                            captured_text,
+                            source,
+                            truncated,
+                            templates: app.config.clipboard_templates.clone(),
+                        },
+                    );
+                }
+                AppEvent::InvokeScreenshot => {
+                    // Hide any active action sheet before capturing so it never blocks the screen.
+                    app.action_window = None;
+                    let p = app.proxy.clone();
+                    std::thread::spawn(move || {
+                        let outcome = screenshot::run_interactive_region_capture();
+                        let _ = p.send_event(AppEvent::ScreenshotCaptured(outcome));
+                    });
+                }
+                AppEvent::ScreenshotCaptured(outcome) => match outcome {
+                    CaptureOutcome::Captured(data) => {
+                        info!(
+                            w = data.width,
+                            h = data.height,
+                            "Screenshot region captured"
+                        );
+                        app.open_action_window(target, ActionPanelContent::Screenshot(data));
+                    }
+                    CaptureOutcome::Cancelled => {
+                        info!("Screenshot capture cancelled by user");
+                    }
+                    CaptureOutcome::Error(err) => {
+                        warn!(%err, "Screenshot capture failed");
+                    }
+                },
+                AppEvent::InvokeClipboardActions => {
+                    let (captured_text, source, truncated) =
+                        match clipboard::read_unicode_text(app.config.clipboard_max_chars) {
+                            ClipboardText::Text { text, truncated } => {
+                                (text, CaptureSource::Clipboard, truncated)
+                            }
+                            ClipboardText::Empty => {
+                                (String::new(), CaptureSource::ClipboardEmpty, false)
+                            }
+                            ClipboardText::UnsupportedFormat | ClipboardText::Unavailable(_) => {
+                                (String::new(), CaptureSource::ManualFallback, false)
+                            }
+                        };
+                    app.open_action_window(
+                        target,
+                        ActionPanelContent::Clipboard {
+                            captured_text,
+                            source,
+                            truncated,
+                            templates: app.config.clipboard_templates.clone(),
+                        },
+                    );
+                }
+                AppEvent::ActionIpc(msg) => match msg {
+                    ActionIpcMessage::Ready => {
+                        if let Some(win) = &app.action_window {
+                            win.push_initial_content();
+                        }
+                    }
+                    ActionIpcMessage::ConfirmText { prompt } => {
+                        // Also place prompt on clipboard so Ctrl+V works as an instant fallback.
+                        let _ = clipboard::write_unicode_text(&prompt);
+                        app.action_window = None;
+                        app.focus_active_gemini_for_handoff();
+                        app.engine.insert_prompt_into_composer(&prompt);
+                    }
+                    ActionIpcMessage::CopyText { prompt } => {
+                        if let Err(err) = clipboard::write_unicode_text(&prompt) {
+                            warn!(%err, "Failed to copy prompt text");
+                        }
+                        app.action_window = None;
+                    }
+                    ActionIpcMessage::ConfirmScreenshot { prompt } => {
+                        let shot = app
+                            .action_window
+                            .as_ref()
+                            .and_then(|w| w.screenshot_data().cloned());
+                        app.action_window = None;
+                        if let Some(data) = shot {
+                            if app.config.screenshot_copy_to_clipboard {
+                                let _ = clipboard::write_image(
+                                    &data.bgra_pixels,
+                                    data.width,
+                                    data.height,
+                                    &data.png_bytes,
+                                );
+                            }
+                            app.focus_active_gemini_for_handoff();
+                            app.engine
+                                .attach_screenshot_to_composer(&data.png_bytes, Some(&prompt));
+                        }
+                    }
+                    ActionIpcMessage::CopyScreenshot => {
+                        if let Some(data) = app
+                            .action_window
+                            .as_ref()
+                            .and_then(|w| w.screenshot_data().cloned())
+                            && let Err(err) = clipboard::write_image(
+                                &data.bgra_pixels,
+                                data.width,
+                                data.height,
+                                &data.png_bytes,
+                            )
+                        {
+                            warn!(%err, "Failed to copy screenshot to clipboard");
+                        }
+                        app.action_window = None;
+                    }
+                    ActionIpcMessage::RetakeScreenshot => {
+                        app.action_window = None;
+                        let _ = app.proxy.send_event(AppEvent::InvokeScreenshot);
+                    }
+                    ActionIpcMessage::Cancel => {
+                        app.action_window = None;
+                    }
+                },
+                AppEvent::EvaluateIdleSuspend(generation) => {
+                    app.handle_evaluate_idle_suspend(generation);
+                }
                 AppEvent::HotkeyPressed(id) => match app.hotkeys.action_for_id(id) {
                     Some(HotkeyAction::ToggleQuickChat) => app.toggle_quick_chat(),
                     Some(HotkeyAction::ShowFullWindow) => app.show_main_window(),
+                    Some(HotkeyAction::ToggleCompanion) => app.toggle_companion(),
+                    Some(HotkeyAction::AskSelection) => {
+                        let _ = app.proxy.send_event(AppEvent::InvokeAskSelection);
+                    }
+                    Some(HotkeyAction::CaptureScreenshot) => {
+                        let _ = app.proxy.send_event(AppEvent::InvokeScreenshot);
+                    }
+                    Some(HotkeyAction::ClipboardActions) => {
+                        let _ = app.proxy.send_event(AppEvent::InvokeClipboardActions);
+                    }
                     None => {}
                 },
                 AppEvent::TrayMenu(id) => match id.as_str() {
                     MENU_OPEN_GEMINI => app.show_main_window(),
                     MENU_QUICK_CHAT => app.toggle_quick_chat(),
+                    MENU_COMPANION => app.toggle_companion(),
                     MENU_NEW_CHAT => {
                         let _ = app.proxy.send_event(AppEvent::NewChat);
                     }
-                    MENU_SETTINGS => app.open_or_focus_settings(target),
+                    MENU_CAPTURE_SCREENSHOT => {
+                        let _ = app.proxy.send_event(AppEvent::InvokeScreenshot);
+                    }
+                    MENU_CLIPBOARD_ACTIONS => {
+                        let _ = app.proxy.send_event(AppEvent::InvokeClipboardActions);
+                    }
+                    MENU_SETTINGS => app.open_or_focus_settings(target, None),
                     MENU_QUIT => {
                         let _ = app.proxy.send_event(AppEvent::Quit);
                     }
@@ -569,14 +1142,25 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::TrayLeftClick => {
                     if app.main_window.is_visible() && !app.main_window.is_minimized() {
                         app.hide_main_to_tray();
+                    } else if app.companion_window.is_visible()
+                        && !app.companion_window.is_minimized()
+                    {
+                        app.hide_companion();
                     } else {
                         app.show_main_window();
                     }
                 }
                 AppEvent::DocumentTitleChanged(doc_title) => {
-                    // Keep the base title stable so single-instance discovery remains reliable,
-                    // while still reflecting Google Gemini context cleanly in logs.
-                    info!(%doc_title, "Gemini document title updated");
+                    if !app.first_title_logged {
+                        app.first_title_logged = true;
+                        info!(
+                            elapsed_ms = app.startup_clock.elapsed().as_millis(),
+                            %doc_title,
+                            "Startup phase: first visible Gemini document title"
+                        );
+                    } else {
+                        info!(%doc_title, "Gemini document title updated");
+                    }
                 }
                 AppEvent::Quit => {
                     app.shutdown();
@@ -619,12 +1203,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                             if app.config.theme == config::ThemePreference::System =>
                         {
                             app.effective_dark = platform::is_system_dark_mode();
-                            platform::style_main_window(&app.main_window, app.effective_dark);
-                            platform::style_quick_chat_window(
-                                &app.quick_chat_window,
-                                app.effective_dark,
-                            );
-                            app.engine.apply_theme(app.config.theme, app.effective_dark);
+                            app.apply_theme_to_all_windows(app.config.theme);
                         }
                         _ => {}
                     }
@@ -645,6 +1224,18 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         _ => {}
                     }
+                } else if window_id == app.companion_window.id() {
+                    match win_event {
+                        WindowEvent::CloseRequested => app.hide_companion(),
+                        WindowEvent::Moved(_) => {
+                            app.snap_companion_if_needed();
+                            app.capture_companion_geometry();
+                        }
+                        WindowEvent::Resized(_) if app.companion_window.is_visible() => {
+                            app.capture_companion_geometry();
+                        }
+                        _ => {}
+                    }
                 } else if app
                     .settings_window
                     .as_ref()
@@ -652,6 +1243,14 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     && matches!(win_event, WindowEvent::CloseRequested)
                 {
                     app.settings_window = None;
+                    app.perf_sampler.reset();
+                } else if app
+                    .action_window
+                    .as_ref()
+                    .is_some_and(|a| a.id() == window_id)
+                    && matches!(win_event, WindowEvent::CloseRequested)
+                {
+                    app.action_window = None;
                 }
             }
             _ => {}

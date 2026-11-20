@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::Instant;
 
 use tao::event_loop::EventLoopProxy;
 use tao::window::Window;
@@ -20,13 +21,21 @@ use crate::navigation::{
     NavigationDecision, NewWindowDecision, classify_navigation, classify_new_window,
     redact_url_for_log,
 };
+use crate::productivity::encode_base64;
 
 pub const GEMINI_APP_URL: &str = "https://gemini.google.com/app";
 
+/// Host window kind encoded into an `AtomicU8` for lock-free accelerator key routing.
+pub const HOST_MAIN: u8 = 0;
+pub const HOST_QUICK_CHAT: u8 = 1;
+pub const HOST_COMPANION: u8 = 2;
+
 /// Encapsulates the embedded system WebView so rendering engine details remain cleanly
-/// separated from the rest of the desktop application.
+/// separated from desktop shell orchestration.
 pub struct WebViewEngine {
     webview: WebView,
+    low_memory: AtomicBool,
+    suspended: Arc<AtomicBool>,
 }
 
 impl WebViewEngine {
@@ -35,11 +44,19 @@ impl WebViewEngine {
         web_context: &mut WebContext,
         theme_pref: ThemePreference,
         is_dark: bool,
-        in_quick_chat: Arc<AtomicBool>,
+        active_host_mode: Arc<AtomicU8>,
+        startup_clock: Instant,
         proxy: EventLoopProxy<AppEvent>,
     ) -> wry::Result<Self> {
         let bg = background_rgba(is_dark);
         let title_proxy = proxy.clone();
+        let first_nav_logged = Arc::new(AtomicBool::new(false));
+        let first_started_logged = Arc::new(AtomicBool::new(false));
+        let first_finished_logged = Arc::new(AtomicBool::new(false));
+
+        let nav_flag = Arc::clone(&first_nav_logged);
+        let load_started_flag = Arc::clone(&first_started_logged);
+        let load_finished_flag = Arc::clone(&first_finished_logged);
 
         let builder = WebViewBuilder::new_with_web_context(web_context)
             .with_url(GEMINI_APP_URL)
@@ -50,19 +67,46 @@ impl WebViewEngine {
                 info!(?kind, "Permission requested by Gemini web content");
                 PermissionResponse::Default
             })
-            .with_on_page_load_handler(|event, uri| {
+            .with_on_page_load_handler(move |event, uri| {
                 let safe_url = redact_url_for_log(&uri);
-                let state = match event {
-                    PageLoadEvent::Started => "started",
-                    PageLoadEvent::Finished => "finished",
-                };
-                info!(state, url = %safe_url, "Page load state changed");
+                match event {
+                    PageLoadEvent::Started => {
+                        if !load_started_flag.swap(true, Ordering::Relaxed) {
+                            info!(
+                                elapsed_ms = startup_clock.elapsed().as_millis(),
+                                url = %safe_url,
+                                "Startup phase: first page load started"
+                            );
+                        } else {
+                            info!(state = "started", url = %safe_url, "Page load state changed");
+                        }
+                    }
+                    PageLoadEvent::Finished => {
+                        if !load_finished_flag.swap(true, Ordering::Relaxed) {
+                            info!(
+                                elapsed_ms = startup_clock.elapsed().as_millis(),
+                                url = %safe_url,
+                                "Startup phase: first page load finished (interactive)"
+                            );
+                        } else {
+                            info!(state = "finished", url = %safe_url, "Page load state changed");
+                        }
+                    }
+                }
             })
-            .with_navigation_handler(|uri| {
+            .with_navigation_handler(move |uri| {
                 let safe_url = redact_url_for_log(&uri);
                 match classify_navigation(&uri) {
                     NavigationDecision::AllowInApp => {
-                        info!(url = %safe_url, "Allowing in-app navigation");
+                        if !nav_flag.swap(true, Ordering::Relaxed) {
+                            info!(
+                                elapsed_ms = startup_clock.elapsed().as_millis(),
+                                url = %safe_url,
+                                "Startup phase: first navigation dispatched"
+                            );
+                        } else {
+                            info!(url = %safe_url, "Allowing in-app navigation");
+                        }
                         true
                     }
                     NavigationDecision::OpenExternal => {
@@ -113,12 +157,16 @@ impl WebViewEngine {
         let webview = builder.build(window)?;
 
         #[cfg(target_os = "windows")]
-        install_windows_accelerators(&webview, in_quick_chat, proxy);
+        install_windows_accelerators(&webview, active_host_mode, proxy);
 
         #[cfg(not(target_os = "windows"))]
-        let _ = (in_quick_chat, proxy);
+        let _ = (active_host_mode, proxy);
 
-        Ok(Self { webview })
+        Ok(Self {
+            webview,
+            low_memory: AtomicBool::new(false),
+            suspended: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Reparents the single live WebView into `target_window`, preserving active
@@ -127,12 +175,75 @@ impl WebViewEngine {
         #[cfg(target_os = "windows")]
         {
             self.webview.reparent(target_window.hwnd())?;
+            self.sync_bounds_to_window(target_window);
         }
         #[cfg(not(target_os = "windows"))]
         {
             let _ = target_window;
         }
         Ok(())
+    }
+
+    /// Synchronizes both the native WebView host child HWND and the WebView2 controller
+    /// bounds to `target_window`'s exact inner client size after reparenting or showing.
+    pub fn sync_bounds_to_window(&self, target_window: &Window) {
+        let size = target_window.inner_size();
+        if size.width > 0 && size.height > 0 {
+            let bounds = wry::Rect {
+                position: tao::dpi::PhysicalPosition::new(0, 0).into(),
+                size: size.into(),
+            };
+            if let Err(err) = self.webview.set_bounds(bounds) {
+                warn!(?err, "Failed to sync WebView bounds to target window");
+            }
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::Foundation::{HWND, RECT};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetClientRect, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
+                };
+                let parent_hwnd = HWND(target_window.hwnd() as _);
+                let mut rc = RECT::default();
+                if unsafe { GetClientRect(parent_hwnd, &mut rc) }.is_ok() {
+                    let w = rc.right - rc.left;
+                    let h = rc.bottom - rc.top;
+                    if w > 0 && h > 0 {
+                        let controller = self.webview.controller();
+                        let _ = unsafe {
+                            controller.SetBounds(RECT {
+                                left: 0,
+                                top: 0,
+                                right: w,
+                                bottom: h,
+                            })
+                        };
+                        let mut host_hwnd = HWND::default();
+                        if unsafe { controller.ParentWindow(&mut host_hwnd) }.is_ok()
+                            && !host_hwnd.0.is_null()
+                        {
+                            let _ = unsafe {
+                                SetWindowPos(
+                                    host_hwnd,
+                                    None,
+                                    0,
+                                    0,
+                                    w,
+                                    h,
+                                    SWP_NOACTIVATE | SWP_NOZORDER,
+                                )
+                            };
+                        }
+                        info!(
+                            inner_w = size.width,
+                            inner_h = size.height,
+                            client_w = w,
+                            client_h = h,
+                            "Synced WebView2 controller and host bounds"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     pub fn set_visible(&self, visible: bool) {
@@ -148,6 +259,7 @@ impl WebViewEngine {
     }
 
     pub fn load_new_chat(&self) {
+        self.resume_if_suspended();
         if let Err(err) = self.webview.load_url(GEMINI_APP_URL) {
             warn!(?err, "Failed to load Gemini home URL");
         }
@@ -165,9 +277,17 @@ impl WebViewEngine {
         let _ = pref;
     }
 
-    /// Switches WebView2 between Normal and Low memory usage target levels when hidden in tray.
-    /// Does not terminate the renderer or drop cookies/sessions.
+    pub fn is_low_memory(&self) -> bool {
+        self.low_memory.load(Ordering::Relaxed)
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        self.suspended.load(Ordering::Relaxed)
+    }
+
+    /// Switches WebView2 between Normal and Low memory usage target levels.
     pub fn set_low_memory(&self, low: bool) {
+        self.low_memory.store(low, Ordering::Relaxed);
         #[cfg(target_os = "windows")]
         {
             let level = if low {
@@ -179,8 +299,159 @@ impl WebViewEngine {
                 warn!(?err, low, "Failed to set WebView2 memory usage level");
             }
         }
-        #[cfg(not(target_os = "windows"))]
-        let _ = low;
+    }
+
+    /// Requests conditional WebView2 renderer suspension (`ICoreWebView2_3::TrySuspend`)
+    /// when hidden in tray in Efficiency mode. Safely preserves cookies and DOM state.
+    pub fn try_suspend(&self) {
+        if self.suspended.load(Ordering::Relaxed) {
+            return;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+            use webview2_com::TrySuspendCompletedHandler;
+            use windows::core::Interface;
+
+            let flag = Arc::clone(&self.suspended);
+            let wv = self.webview.webview();
+            if let Ok(wv3) = wv.cast::<ICoreWebView2_3>() {
+                let handler = TrySuspendCompletedHandler::create(Box::new(move |hr, is_succ| {
+                    if hr.is_ok() && is_succ {
+                        flag.store(true, Ordering::Relaxed);
+                        info!("WebView2 suspended cleanly in Efficiency mode");
+                    }
+                    Ok(())
+                }));
+                if let Err(err) = unsafe { wv3.TrySuspend(&handler) } {
+                    warn!(?err, "WebView2 TrySuspend call failed");
+                }
+            }
+        }
+    }
+
+    /// Resumes WebView2 immediately if suspended.
+    pub fn resume_if_suspended(&self) {
+        if !self.suspended.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+            use windows::core::Interface;
+
+            let wv = self.webview.webview();
+            if let Ok(wv3) = wv.cast::<ICoreWebView2_3>() {
+                if let Err(err) = unsafe { wv3.Resume() } {
+                    warn!(?err, "WebView2 Resume call failed");
+                } else {
+                    info!("WebView2 resumed from Efficiency suspension");
+                }
+            }
+        }
+    }
+
+    /// User-triggered, non-persistent insertion of a reviewed prompt into Gemini's standard
+    /// ARIA textbox (`[role="textbox"][contenteditable="true"]`).
+    /// - Triggered strictly after explicit user confirmation in the Review/Action sheet.
+    /// - Uses standard `execCommand('insertText')` so Angular/Quill updates state cleanly.
+    /// - NEVER auto-submits the message; user retains full control to edit and press Enter.
+    pub fn insert_prompt_into_composer(&self, prompt: &str) {
+        let Ok(json_text) = serde_json::to_string(prompt) else {
+            return;
+        };
+        let script = format!(
+            r#"(function() {{
+  try {{
+    const el = document.querySelector('[role="textbox"][contenteditable="true"], textarea[aria-label], [contenteditable="true"]');
+    if (!el) return "no_editor";
+    el.focus();
+    const sel = window.getSelection();
+    if (sel && el.isContentEditable) {{
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }}
+    const ok = document.execCommand('insertText', false, {json_text});
+    return ok ? "inserted" : "clipboard_fallback";
+  }} catch (e) {{
+    return "error";
+  }}
+}})();"#
+        );
+        let _ = self.webview.evaluate_script_with_callback(&script, |res| {
+            info!(result = %res, "Prompt composer handoff completed");
+        });
+    }
+
+    /// User-triggered, non-persistent image attachment into Gemini's standard composer using
+    /// a standard `ClipboardEvent('paste', { clipboardData })` with a `File('screenshot.png')`
+    /// (while the same screenshot is also on the Windows clipboard for manual Ctrl+V fallback).
+    /// NEVER auto-submits; user can inspect the attached preview and add text before sending.
+    pub fn attach_screenshot_to_composer(&self, png_bytes: &[u8], optional_prompt: Option<&str>) {
+        let b64 = encode_base64(png_bytes);
+        let prompt_json = optional_prompt
+            .filter(|s| !s.trim().is_empty())
+            .and_then(|s| serde_json::to_string(s).ok())
+            .unwrap_or_else(|| "null".to_string());
+
+        let script = format!(
+            r#"(function() {{
+  try {{
+    const el = document.querySelector('[role="textbox"][contenteditable="true"], [contenteditable="true"]');
+    if (!el) return "no_editor";
+    el.focus();
+    const bin = atob("{b64}");
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const file = new File([bytes], "screenshot.png", {{ type: "image/png" }});
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const pasteEv = new ClipboardEvent("paste", {{
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dt
+    }});
+    el.dispatchEvent(pasteEv);
+    const prompt = {prompt_json};
+    if (prompt) {{
+      document.execCommand("insertText", false, prompt);
+    }}
+    return "dispatched";
+  }} catch (e) {{
+    return "error:" + String(e);
+  }}
+}})();"#
+        );
+        let _ = self.webview.evaluate_script_with_callback(&script, |res| {
+            info!(result = %res, "Screenshot composer attachment completed");
+        });
+    }
+
+    /// Focuses Gemini's accessible prompt textbox cleanly when summoning Quick Chat so the
+    /// user can start typing immediately without clicking first.
+    /// Also checks if a compact responsive navigation drawer overlay is covering the viewport
+    /// using standard ARIA (`[role="navigation"]` / `aria-expanded`) without relying on
+    /// obfuscated internal CSS class names.
+    pub fn focus_composer_for_quick_chat(&self) {
+        let script = r#"(function() {
+  try {
+    if (window.innerWidth < 960) {
+      const toggle = document.querySelector('button[aria-expanded="true"][aria-controls], button[aria-expanded="true"][aria-label]');
+      if (toggle) {
+        const rect = toggle.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && rect.left < 360 && rect.top < 96) {
+          toggle.click();
+        }
+      }
+    }
+    const el = document.querySelector('[role="textbox"][contenteditable="true"], [contenteditable="true"]');
+    if (el) el.focus();
+  } catch (_) {}
+})();"#;
+        let _ = self.webview.evaluate_script(script);
     }
 }
 
@@ -201,15 +472,15 @@ fn to_wry_theme(pref: ThemePreference) -> WryTheme {
     }
 }
 
-/// Hooks native WebView2 `AcceleratorKeyPressed` events (zero JavaScript injection into Google)
-/// to handle desktop shell shortcuts while the WebView owns keyboard focus:
+/// Hooks native WebView2 `AcceleratorKeyPressed` events (zero persistent JS injection):
 /// - `Esc` (in Quick Chat mode only) -> hides Quick Chat immediately
-/// - `Ctrl + Shift + E` (in Quick Chat mode) -> expands seamlessly into the Full Window
+/// - `Ctrl + Shift + E` (in Quick Chat or Companion) -> expands into Full Window
+/// - `Ctrl + Shift + T` (in Companion) -> toggles Always on Top immediately
 /// - `Ctrl + ,` -> opens GeminiDesk Settings
 #[cfg(target_os = "windows")]
 fn install_windows_accelerators(
     webview: &WebView,
-    in_quick_chat: Arc<AtomicBool>,
+    active_host_mode: Arc<AtomicU8>,
     proxy: EventLoopProxy<AppEvent>,
 ) {
     use webview2_com::AcceleratorKeyPressedEventHandler;
@@ -218,7 +489,7 @@ fn install_windows_accelerators(
         COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetKeyState, VK_CONTROL, VK_E, VK_ESCAPE, VK_OEM_COMMA, VK_SHIFT,
+        GetKeyState, VK_CONTROL, VK_E, VK_ESCAPE, VK_OEM_COMMA, VK_SHIFT, VK_T,
     };
 
     let controller = webview.controller();
@@ -241,8 +512,9 @@ fn install_windows_accelerators(
 
             let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
             let shift_down = (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0;
+            let host = active_host_mode.load(Ordering::Relaxed);
 
-            if vkey == VK_ESCAPE.0 as u32 && in_quick_chat.load(Ordering::Relaxed) {
+            if vkey == VK_ESCAPE.0 as u32 && host == HOST_QUICK_CHAT {
                 let _ = args.SetHandled(true);
                 let _ = proxy.send_event(AppEvent::HideQuickChat);
                 return Ok(());
@@ -250,17 +522,23 @@ fn install_windows_accelerators(
 
             if ctrl_down && !shift_down && vkey == VK_OEM_COMMA.0 as u32 {
                 let _ = args.SetHandled(true);
-                let _ = proxy.send_event(AppEvent::OpenSettings);
+                let _ = proxy.send_event(AppEvent::OpenSettings(None));
                 return Ok(());
             }
 
             if ctrl_down
                 && shift_down
                 && vkey == VK_E.0 as u32
-                && in_quick_chat.load(Ordering::Relaxed)
+                && (host == HOST_QUICK_CHAT || host == HOST_COMPANION)
             {
                 let _ = args.SetHandled(true);
                 let _ = proxy.send_event(AppEvent::ShowMainWindow);
+                return Ok(());
+            }
+
+            if ctrl_down && shift_down && vkey == VK_T.0 as u32 && host == HOST_COMPANION {
+                let _ = args.SetHandled(true);
+                let _ = proxy.send_event(AppEvent::ToggleCompanionAlwaysOnTop);
                 return Ok(());
             }
         }
