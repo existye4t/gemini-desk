@@ -503,7 +503,11 @@ pub fn verify_file_sha256(
 }
 
 fn build_http_agent() -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
+        .build();
     let config = ureq::Agent::config_builder()
+        .tls_config(tls)
         .timeout_global(Some(HTTP_TIMEOUT))
         .user_agent(format!("GeminiDesk/{}", env!("CARGO_PKG_VERSION")))
         .build();
@@ -848,5 +852,12 @@ mod tests {
 
         let _ = handle.join();
         let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn http_agent_uses_native_tls_provider_without_panicking_on_https() {
+        let agent = build_http_agent();
+        let res = fetch_bounded_bytes(&agent, "https://127.0.0.1:1/latest.json", 1024);
+        assert!(res.is_err());
     }
 }
