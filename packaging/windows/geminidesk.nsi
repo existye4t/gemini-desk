@@ -19,16 +19,16 @@ Unicode true
   !define BINARY_PATH "..\..\target\release\gemini-desk.exe"
 !endif
 !ifndef OUT_FILE
-  !define OUT_FILE "..\..\dist\GeminiDesk-${PRODUCT_VERSION}-x64-setup.exe"
+  !define OUT_FILE "..\..\dist\GeminiDesk-${PRODUCT_VERSION}-Windows-x64-Setup.exe"
 !endif
 
 !define PRODUCT_NAME "GeminiDesk"
 !define PRODUCT_PUBLISHER "GeminiDesk Contributors"
-!define PRODUCT_WEB_SITE "https://github.com/geminidesk/geminidesk"
+!define PRODUCT_WEB_SITE "https://github.com/existye4t/gemini-desk"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define WEBVIEW2_GUID "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
-Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
+Name "${PRODUCT_NAME}"
 OutFile "${OUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\${PRODUCT_NAME}"
 InstallDirRegKey HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"
@@ -41,7 +41,7 @@ VIProductVersion "${PRODUCT_VERSION}.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "FileVersion" "${PRODUCT_VERSION}.0"
-VIAddVersionKey "FileDescription" "GeminiDesk Installer — Unofficial Desktop Client for Google Gemini"
+VIAddVersionKey "FileDescription" "GeminiDesk Installer"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 
@@ -88,6 +88,18 @@ FunctionEnd
 
 Function .onInit
   Call CheckWebView2Runtime
+FunctionEnd
+
+Function .onInstSuccess
+  ; Support automatic relaunch after in-app verified silent updates (`/S /AUTORESTART`)
+  ${If} ${Silent}
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/AUTORESTART" $1
+    ${IfNot} ${Errors}
+      Exec '"$INSTDIR\gemini-desk.exe"'
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 Section "GeminiDesk Core (Required)" SecCore

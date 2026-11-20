@@ -44,7 +44,7 @@ pub const WM_ACTIVATE_CLIPBOARD: u32 = WM_APP + 0x105;
 pub const WM_ACTIVATE_ASK_SELECTION: u32 = WM_APP + 0x106;
 pub const WM_ACTIVATE_SCREENSHOT: u32 = WM_APP + 0x107;
 
-pub const MAIN_WINDOW_TITLE_BASE: &str = "GeminiDesk — Unofficial Gemini Client";
+pub const MAIN_WINDOW_TITLE_BASE: &str = "GeminiDesk";
 
 const SINGLE_INSTANCE_MUTEX: &str = "Local\\GeminiDesk_SingleInstance_v1";
 const RUN_SUBKEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";

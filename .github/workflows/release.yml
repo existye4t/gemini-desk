@@ -16,12 +16,10 @@ on:
         default: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  # Optional compile-time Ed25519 public key (64 hex chars) stored in repo variables/secrets.
-  # When unset, builds cleanly with automatic updates fail-closed.
   GEMINIDESK_UPDATER_PUBKEY: ${{ vars.GEMINIDESK_UPDATER_PUBKEY }}
 
 jobs:
@@ -49,15 +47,15 @@ jobs:
     needs: resolve-version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo test --locked
       - run: cargo build --release --locked
       - name: Build Windows NSIS installer & Portable ZIP
         shell: pwsh
-        run: .\packaging\windows\build-installer.ps1 -Version "${{ needs.resolve-version.outputs.version }}"
-      - uses: actions/upload-artifact@v4
+        run: .\packaging\windows\build-installer.ps1 -Version "${{ needs.resolve-version.outputs.version }}" -RequireNsis
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows
           path: dist/*
@@ -66,25 +64,31 @@ jobs:
     needs: resolve-version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev pkg-config libxdo-dev rpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+            libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev pkg-config libxdo-dev \
+            desktop-file-utils appstream rpm file
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo test --locked
       - run: cargo build --release --locked
-      - name: Build .deb, .rpm, and AppImage/tarball
+      - name: Build .deb, .rpm, AppImage & PKGBUILD
         run: |
+          VER="${{ needs.resolve-version.outputs.version }}"
           mkdir -p dist
           cargo install cargo-deb cargo-generate-rpm --locked
           cargo deb --no-build --output dist/
-          cargo generate-rpm -o dist/
+          mv dist/*.deb "dist/GeminiDesk-${VER}-Linux-x86_64.deb"
+          cargo generate-rpm -o "dist/GeminiDesk-${VER}-Linux-x86_64.rpm"
+          curl -fsSL -o /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
           chmod +x packaging/linux/build-appimage.sh
-          ./packaging/linux/build-appimage.sh "${{ needs.resolve-version.outputs.version }}" x86_64
+          APPIMAGETOOL=/tmp/appimagetool.AppImage ./packaging/linux/build-appimage.sh "${VER}" x86_64
           cp packaging/linux/PKGBUILD dist/PKGBUILD
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-linux
           path: dist/*
@@ -100,11 +104,11 @@ jobs:
           - arch: x86_64
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Build macOS .app & .dmg (signed & notarized when Apple secrets are configured)
         env:
@@ -118,7 +122,7 @@ jobs:
             "${{ needs.resolve-version.outputs.version }}" \
             "${{ matrix.arch }}" \
             "target/${{ matrix.target }}/release/gemini-desk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-macos-${{ matrix.arch }}
           path: dist/*.dmg
@@ -126,13 +130,15 @@ jobs:
   prepare-draft-release:
     needs: [resolve-version, build-windows, build-linux, build-macos]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: collected
           merge-multiple: true
-      - name: Generate SHA256SUMS.txt and Ed25519-signed latest.json
+      - name: Generate SHA256SUMS.txt, sign latest.json with Ed25519, and verify signature
         env:
           UPDATER_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_SIGNING_PRIVATE_KEY }}
         run: |
@@ -142,18 +148,26 @@ jobs:
             --base-url "https://github.com/${{ github.repository }}/releases/download/${{ needs.resolve-version.outputs.tag }}" \
             --dist-dir collected \
             --notes-file .github/RELEASE_NOTES_TEMPLATE.md
+          if [[ -n "${GEMINIDESK_UPDATER_PUBKEY:-}" ]]; then
+            python3 scripts/release_manifest.py --verify \
+              collected/latest.json \
+              collected/latest.json.sig \
+              "${GEMINIDESK_UPDATER_PUBKEY}"
+          fi
+          sha256sum -c <(cd collected && sha256sum --ignore-missing -c SHA256SUMS.txt >/dev/null && true) || true
+          (cd collected && sha256sum -c SHA256SUMS.txt)
           ls -lh collected/
       - name: Upload consolidated verified release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: geminidesk-${{ needs.resolve-version.outputs.tag }}-draft-bundle
           path: collected/*
       - name: Create DRAFT GitHub Release (requires explicit manual publication)
         if: needs.resolve-version.outputs.dry_run != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
-          name: GeminiDesk ${{ needs.resolve-version.outputs.tag }} (Draft)
+          name: GeminiDesk ${{ needs.resolve-version.outputs.tag }}
           draft: true
           prerelease: true
           body_path: .github/RELEASE_NOTES_TEMPLATE.md

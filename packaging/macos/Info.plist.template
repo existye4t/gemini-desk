@@ -29,7 +29,7 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>
-  <string>MIT OR Apache-2.0 — Independent unofficial client, not affiliated with Google LLC.</string>
+  <string>MIT OR Apache-2.0 — Independent desktop client for Google Gemini.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>GeminiDesk requests microphone access only when you activate voice input or Gemini Live inside Google Gemini.</string>
   <key>NSCameraUsageDescription</key>

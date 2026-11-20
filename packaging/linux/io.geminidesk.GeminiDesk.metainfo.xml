@@ -4,11 +4,11 @@
   <metadata_license>MIT</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
   <name>GeminiDesk</name>
-  <summary>Unofficial lightweight Rust desktop client for Google Gemini</summary>
+  <summary>Lightweight native Rust desktop client for Google Gemini</summary>
   <description>
     <p>
-      GeminiDesk is an independent, unofficial desktop shell for Google Gemini built in Rust
-      using native platform WebViews (WebKitGTK on Linux, WebView2 on Windows, WKWebView on macOS)
+      GeminiDesk is an independent native desktop client for Google Gemini built in Rust
+      using platform WebViews (WebKitGTK on Linux, WebView2 on Windows, WKWebView on macOS)
       without Electron or bundled Chromium runtimes.
     </p>
     <p>
@@ -18,8 +18,8 @@
     </p>
   </description>
   <launchable type="desktop-id">io.geminidesk.GeminiDesk.desktop</launchable>
-  <url type="homepage">https://github.com/geminidesk/geminidesk</url>
-  <url type="bugtracker">https://github.com/geminidesk/geminidesk/issues</url>
+  <url type="homepage">https://github.com/existye4t/gemini-desk</url>
+  <url type="bugtracker">https://github.com/existye4t/gemini-desk/issues</url>
   <developer id="io.geminidesk">
     <name>GeminiDesk Contributors</name>
   </developer>

@@ -80,7 +80,7 @@ impl TrayController {
 
         let mut builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("GeminiDesk — Unofficial Gemini Client")
+            .with_tooltip("GeminiDesk")
             .with_menu_on_left_click(false);
 
         if let Some(icon) = icon::tray_icon() {

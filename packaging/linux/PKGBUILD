@@ -4,9 +4,9 @@
 pkgname=geminidesk
 pkgver=0.4.0
 pkgrel=1
-pkgdesc="Unofficial, ultra-lightweight Rust desktop client for Google Gemini (WebKitGTK)"
+pkgdesc="Lightweight native Rust desktop client for Google Gemini (WebKitGTK)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/geminidesk/geminidesk"
+url="https://github.com/existye4t/gemini-desk"
 license=('MIT' 'Apache-2.0')
 depends=(
   'webkit2gtk-4.1'

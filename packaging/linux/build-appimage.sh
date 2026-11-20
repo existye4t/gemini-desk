@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds a lean Linux AppImage for GeminiDesk.
+# Builds a lean Linux AppImage (or tarball fallback) for GeminiDesk.
 #
 # Portability note (honest by design):
-# GeminiDesk intentionally relies on the host system's native WebKitGTK 4.1, GTK3,
-# OpenSSL, and xdg-desktop-portal libraries rather than bundling a 200+ MB browser engine
-# or fragile glibc copies. This keeps the AppImage tiny (~3 MB), but requires:
-#   - Arch / CachyOS: webkit2gtk-4.1 gtk3 xdg-desktop-portal (plus xdg-desktop-portal-kde on KDE)
+# GeminiDesk relies on the host system's native WebKitGTK 4.1, GTK3, OpenSSL,
+# and xdg-desktop-portal libraries rather than bundling a 200+ MB Chromium runtime.
+# Required host packages:
+#   - Arch / CachyOS: webkit2gtk-4.1 gtk3 openssl xdg-desktop-portal (plus xdg-desktop-portal-kde on KDE)
 #   - Ubuntu 24.04 / Debian: libwebkit2gtk-4.1-0 libgtk-3-0 xdg-desktop-portal
 #   - Fedora: webkit2gtk4.1 gtk3 xdg-desktop-portal
 set -euo pipefail
@@ -51,13 +51,18 @@ exec "${HERE}/usr/bin/gemini-desk" "$@"
 EOF
 chmod +x "${APPDIR}/AppRun"
 
-OUT_FILE="${OUT_DIR}/GeminiDesk-${VERSION}-linux-${ARCH}.AppImage"
-if command -v appimagetool >/dev/null 2>&1; then
-  ARCH="${ARCH}" appimagetool --no-appstream "${APPDIR}" "${OUT_FILE}"
+OUT_FILE="${OUT_DIR}/GeminiDesk-${VERSION}-Linux-${ARCH}.AppImage"
+TOOL="${APPIMAGETOOL:-$(command -v appimagetool || true)}"
+if [[ -n "${TOOL}" && -x "${TOOL}" ]]; then
+  # Support containers/runners without FUSE by setting APPIMAGE_EXTRACT_AND_RUN=1 when needed
+  APPIMAGE_EXTRACT_AND_RUN=1 ARCH="${ARCH}" "${TOOL}" --no-appstream "${APPDIR}" "${OUT_FILE}"
+  chmod +x "${OUT_FILE}"
   echo "Built AppImage: ${OUT_FILE}"
 else
-  echo "appimagetool not found; prepared AppDir at ${APPDIR} and creating portable tarball instead."
-  TAR_FILE="${OUT_DIR}/GeminiDesk-${VERSION}-linux-${ARCH}.tar.gz"
+  echo "appimagetool not found; creating portable tarball instead."
+  TAR_FILE="${OUT_DIR}/GeminiDesk-${VERSION}-Linux-${ARCH}.tar.gz"
   tar -czf "${TAR_FILE}" -C "${APPDIR}/usr/bin" gemini-desk -C "${REPO_ROOT}" README.md THIRD_PARTY_LICENSES.md
   echo "Built tarball: ${TAR_FILE}"
 fi
+
+rm -rf "${APPDIR}"

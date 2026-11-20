@@ -7,7 +7,7 @@ fn main() {
         res.set("ProductName", "GeminiDesk");
         res.set(
             "FileDescription",
-            "GeminiDesk — Unofficial Desktop Client for Google Gemini",
+            "GeminiDesk — Desktop Client for Google Gemini",
         );
         res.set("CompanyName", "GeminiDesk Contributors");
         res.set("LegalCopyright", "MIT OR Apache-2.0");

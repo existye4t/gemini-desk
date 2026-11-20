@@ -275,7 +275,7 @@ pub struct AppState {
 }
 
 /// Standard OS directory layout for GeminiDesk.
-/// Preserves the Phase B/C WebView2 profile directory:
+/// Preserves the persistent WebView2 profile directory:
 /// `%LOCALAPPDATA%\geminidesk\GeminiDesk\data\webview`
 #[derive(Debug, Clone)]
 pub struct AppPaths {

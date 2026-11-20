@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,11 +23,11 @@ jobs:
     name: Windows (x86_64-pc-windows-msvc)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Format check
         run: cargo fmt --check
@@ -38,12 +41,16 @@ jobs:
         shell: pwsh
         run: |
           $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-          .\packaging\windows\build-installer.ps1 -Version $ver
+          .\packaging\windows\build-installer.ps1 -Version $ver -RequireNsis
+          $setup = "dist\GeminiDesk-$ver-Windows-x64-Setup.exe"
+          $zip = "dist\GeminiDesk-$ver-Windows-x64-Portable.zip"
+          if (-not (Test-Path $setup) -or (Get-Item $setup).Length -le 0) { throw "Missing Setup exe" }
+          if (-not (Test-Path $zip) -or (Get-Item $zip).Length -le 0) { throw "Missing Portable zip" }
           Get-ChildItem dist | Format-Table Name, Length
       - name: Upload Windows CI artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: geminidesk-windows-x86_64
+          name: geminidesk-windows-x64
           path: dist/*
           retention-days: 7
 
@@ -51,7 +58,7 @@ jobs:
     name: Linux (x86_64-unknown-linux-gnu · WebKitGTK)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install GTK3, WebKitGTK 4.1, and packaging validators
         run: |
           sudo apt-get update
@@ -62,11 +69,13 @@ jobs:
             pkg-config \
             libxdo-dev \
             desktop-file-utils \
-            appstream
-      - uses: dtolnay/rust-toolchain@stable
+            appstream \
+            rpm \
+            file
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Format check
         run: cargo fmt --check
@@ -80,29 +89,44 @@ jobs:
         run: |
           desktop-file-validate packaging/linux/io.geminidesk.GeminiDesk.desktop
           appstreamcli validate --no-net packaging/linux/io.geminidesk.GeminiDesk.metainfo.xml
-      - name: Package .deb and verify integrity
+      - name: Package .deb, .rpm, AppImage & PKGBUILD
         run: |
-          cargo install cargo-deb --locked
+          VER="$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)"
+          mkdir -p dist
+          cargo install cargo-deb cargo-generate-rpm --locked
           cargo deb --no-build --output dist/
-          dpkg-deb --info dist/*.deb
-          ./packaging/linux/build-appimage.sh "$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)" x86_64
+          mv dist/*.deb "dist/GeminiDesk-${VER}-Linux-x86_64.deb"
+          dpkg-deb --info "dist/GeminiDesk-${VER}-Linux-x86_64.deb"
+          dpkg-deb --contents "dist/GeminiDesk-${VER}-Linux-x86_64.deb"
+
+          cargo generate-rpm -o "dist/GeminiDesk-${VER}-Linux-x86_64.rpm"
+          rpm -qip "dist/GeminiDesk-${VER}-Linux-x86_64.rpm"
+          rpm -qlp "dist/GeminiDesk-${VER}-Linux-x86_64.rpm"
+
+          curl -fsSL -o /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          chmod +x packaging/linux/build-appimage.sh
+          APPIMAGETOOL=/tmp/appimagetool.AppImage ./packaging/linux/build-appimage.sh "${VER}" x86_64
+          cp packaging/linux/PKGBUILD dist/PKGBUILD
+          ls -lh dist/
       - name: Upload Linux CI artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: geminidesk-linux-x86_64
           path: dist/*
           retention-days: 7
 
   macos:
-    name: macOS (Apple Silicon aarch64 + Intel x86_64 compile)
+    name: macOS (Apple Silicon + Intel)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
           targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Format check
         run: cargo fmt --check
@@ -112,17 +136,18 @@ jobs:
         run: cargo test --locked
       - name: Release build (Apple Silicon aarch64)
         run: cargo build --release --locked --target aarch64-apple-darwin
-      - name: Cross-compile release check (Intel x86_64)
+      - name: Release build (Intel x86_64)
         run: cargo build --release --locked --target x86_64-apple-darwin
-      - name: Package unsigned CI .app & .dmg (Apple Silicon)
+      - name: Package & verify unsigned CI .dmg bundles (Apple Silicon & Intel)
         run: |
           VER="$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)"
           chmod +x packaging/macos/build-bundle.sh
           ./packaging/macos/build-bundle.sh "${VER}" aarch64 target/aarch64-apple-darwin/release/gemini-desk
+          ./packaging/macos/build-bundle.sh "${VER}" x86_64 target/x86_64-apple-darwin/release/gemini-desk
           ls -lh dist/
       - name: Upload macOS CI artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: geminidesk-macos-aarch64-unsigned
+          name: geminidesk-macos-unsigned
           path: dist/*.dmg
           retention-days: 7

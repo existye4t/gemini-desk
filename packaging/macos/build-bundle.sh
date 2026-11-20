@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Builds GeminiDesk.app and GeminiDesk-<version>-macos-<arch>.dmg on macOS.
+# Builds GeminiDesk.app and a compressed .dmg on macOS.
 #
 # Code signing & notarization (fail-closed / transparent):
 # - If MACOS_SIGNING_IDENTITY is set, signs the bundle with Developer ID + Hardened Runtime.
-# - If APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_PASSWORD (or NOTARY_KEYCHAIN_PROFILE) are set,
-#   submits the DMG for Apple notarization and staples the ticket.
+# - If APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_PASSWORD are set, submits the DMG for
+#   Apple notarization and staples the ticket.
 # - Without signing credentials, creates an unsigned development/CI bundle and clearly warns
-#   that unsigned builds are NOT production-ready for unrestricted Gatekeeper distribution.
+#   that unsigned builds are NOT Gatekeeper-ready for public distribution.
 set -euo pipefail
 
 VERSION="${1:-0.4.0}"
@@ -23,6 +23,13 @@ if [[ ! -f "${BIN_PATH}" ]]; then
   exit 1
 fi
 
+ARCH_LABEL="${ARCH}"
+if [[ "${ARCH}" == "aarch64" ]]; then
+  ARCH_LABEL="AppleSilicon"
+elif [[ "${ARCH}" == "x86_64" ]]; then
+  ARCH_LABEL="Intel"
+fi
+
 mkdir -p "${OUT_DIR}"
 APP_BUNDLE="${OUT_DIR}/GeminiDesk.app"
 rm -rf "${APP_BUNDLE}"
@@ -37,7 +44,7 @@ plutil -lint "${APP_BUNDLE}/Contents/Info.plist"
 
 cp "${REPO_ROOT}/THIRD_PARTY_LICENSES.md" "${APP_BUNDLE}/Contents/Resources/THIRD_PARTY_LICENSES.md"
 
-# Build crisp multi-resolution GeminiDesk.icns from our monochrome 512px PNG
+# Build crisp multi-resolution GeminiDesk.icns from monochrome 512px PNG
 ICONSET_DIR="${OUT_DIR}/GeminiDesk.iconset"
 rm -rf "${ICONSET_DIR}"
 mkdir -p "${ICONSET_DIR}"
@@ -56,6 +63,12 @@ if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
   rm -rf "${ICONSET_DIR}"
 fi
 
+# Verify bundle structure & binary linkage before packaging
+test -x "${APP_BUNDLE}/Contents/MacOS/gemini-desk"
+test -f "${APP_BUNDLE}/Contents/Resources/GeminiDesk.icns"
+file "${APP_BUNDLE}/Contents/MacOS/gemini-desk"
+otool -L "${APP_BUNDLE}/Contents/MacOS/gemini-desk"
+
 if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]]; then
   echo "Signing ${APP_BUNDLE} with Developer ID + Hardened Runtime..."
   codesign --deep --force --options runtime --timestamp \
@@ -64,7 +77,7 @@ if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]]; then
     "${APP_BUNDLE}"
   codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
 else
-  echo "WARNING: MACOS_SIGNING_IDENTITY is not set. Bundle is UNSIGNED (development/CI only; not Gatekeeper-ready)."
+  echo "WARNING: MACOS_SIGNING_IDENTITY is not set. Bundle is UNSIGNED (development/CI artifact only; not Gatekeeper-notarized)."
 fi
 
 # Package compressed DMG with Applications drag-install link
@@ -74,12 +87,14 @@ mkdir -p "${DMG_STAGE}"
 cp -R "${APP_BUNDLE}" "${DMG_STAGE}/GeminiDesk.app"
 ln -s /Applications "${DMG_STAGE}/Applications"
 
-DMG_PATH="${OUT_DIR}/GeminiDesk-${VERSION}-macos-${ARCH}.dmg"
+DMG_PATH="${OUT_DIR}/GeminiDesk-${VERSION}-macOS-${ARCH_LABEL}.dmg"
 rm -f "${DMG_PATH}"
-hdiutil create -volname "GeminiDesk ${VERSION}" \
+hdiutil create -volname "GeminiDesk" \
   -srcfolder "${DMG_STAGE}" \
   -ov -format UDZO "${DMG_PATH}"
-rm -rf "${DMG_STAGE}"
+rm -rf "${DMG_STAGE}" "${APP_BUNDLE}"
+
+hdiutil verify "${DMG_PATH}"
 
 if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]]; then
   codesign --force --timestamp --sign "${MACOS_SIGNING_IDENTITY}" "${DMG_PATH}"

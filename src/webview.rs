@@ -773,17 +773,52 @@ fn apply_webkitgtk_settings(webview: &WebView) {
     }
 }
 
-/// Strips path separators and traversal tokens from remote download filenames.
+/// Strips path separators, traversal tokens, and reserved OS device names from downloads.
 fn sanitize_download_filename(name: &str) -> String {
-    name.chars()
+    let cleaned: String = name
+        .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
             _ => c,
         })
-        .collect::<String>()
-        .trim_matches('.')
-        .trim()
-        .to_string()
+        .collect();
+    let trimmed = cleaned.trim_matches('.').trim();
+    if trimmed.is_empty() {
+        return "gemini-download".to_string();
+    }
+    let stem = trimmed.split('.').next().unwrap_or(trimmed);
+    let upper_stem = stem.to_ascii_uppercase();
+    let is_windows_reserved = matches!(
+        upper_stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    let safe = if is_windows_reserved {
+        format!("_{trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+    safe.chars().take(180).collect()
 }
 
 pub fn runtime_version_string() -> String {

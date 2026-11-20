@@ -2,10 +2,10 @@
 name = "gemini-desk"
 version = "0.4.0"
 edition = "2024"
-description = "Lightweight, high-performance unofficial Rust desktop client for Google Gemini"
+description = "Lightweight native Rust desktop client for Google Gemini"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/geminidesk/geminidesk"
-homepage = "https://github.com/geminidesk/geminidesk"
+repository = "https://github.com/existye4t/gemini-desk"
+homepage = "https://github.com/existye4t/gemini-desk"
 readme = "README.md"
 keywords = ["gemini", "desktop", "webview", "rust", "cross-platform"]
 categories = ["gui"]
@@ -101,7 +101,7 @@ maintainer = "GeminiDesk Contributors"
 copyright = "2026, GeminiDesk Contributors"
 license-file = ["THIRD_PARTY_LICENSES.md", "0"]
 extended-description = """\
-Unofficial, ultra-lightweight desktop client for Google Gemini written in Rust. \
+Lightweight native desktop client for Google Gemini written in Rust. \
 Uses the native system WebKitGTK runtime with zero bundled Electron or Chromium."""
 depends = "$auto, libwebkit2gtk-4.1-0, libgtk-3-0, xdg-desktop-portal"
 recommends = "xdg-desktop-portal-kde | xdg-desktop-portal-gtk, wl-clipboard | xclip"

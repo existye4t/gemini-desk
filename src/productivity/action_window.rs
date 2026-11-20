@@ -93,9 +93,7 @@ impl ActionWindow {
     ) -> Result<Self, String> {
         let (title, width, height) = match &content {
             ActionPanelContent::Selection { .. } => ("Ask Gemini with Selection", 620.0, 440.0),
-            ActionPanelContent::Clipboard { .. } => {
-                ("Clipboard Actions — GeminiDesk", 680.0, 460.0)
-            }
+            ActionPanelContent::Clipboard { .. } => ("GeminiDesk Clipboard Actions", 680.0, 460.0),
             ActionPanelContent::Screenshot(_) => ("Screenshot to Gemini", 680.0, 540.0),
         };
 

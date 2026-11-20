@@ -2,8 +2,8 @@
 Type=Application
 Version=1.5
 Name=GeminiDesk
-GenericName=Google Gemini Desktop Client
-Comment=Unofficial lightweight Rust desktop client for Google Gemini
+GenericName=Gemini Desktop Client
+Comment=Lightweight native Rust desktop client for Google Gemini
 Exec=gemini-desk %U
 Icon=io.geminidesk.GeminiDesk
 Terminal=false

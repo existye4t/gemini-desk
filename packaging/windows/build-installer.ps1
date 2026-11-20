@@ -3,7 +3,8 @@ param(
     [string]$Version = "0.4.0",
     [string]$BinaryPath = "",
     [string]$MakeNsisPath = "",
-    [string]$OutDir = ""
+    [string]$OutDir = "",
+    [switch]$RequireNsis
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +18,7 @@ if (-not (Test-Path $BinaryPath)) {
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-# 1. Portable ZIP package
+# 1. Portable ZIP package (uses standard %LOCALAPPDATA% / %APPDATA% profile location)
 $StageDir = Join-Path $OutDir "portable-stage"
 if (Test-Path $StageDir) { Remove-Item -Recurse -Force $StageDir }
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
@@ -26,7 +27,7 @@ Copy-Item $BinaryPath (Join-Path $StageDir "gemini-desk.exe")
 Copy-Item (Join-Path $RepoRoot "README.md") (Join-Path $StageDir "README.md")
 Copy-Item (Join-Path $RepoRoot "THIRD_PARTY_LICENSES.md") (Join-Path $StageDir "THIRD_PARTY_LICENSES.md")
 
-$ZipPath = Join-Path $OutDir "GeminiDesk-$Version-windows-x86_64-portable.zip"
+$ZipPath = Join-Path $OutDir "GeminiDesk-$Version-Windows-x64-Portable.zip"
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
 Compress-Archive -Path (Join-Path $StageDir "*") -DestinationPath $ZipPath -CompressionLevel Optimal
 Remove-Item -Recurse -Force $StageDir
@@ -45,13 +46,15 @@ if (-not $MakeNsisPath) {
 }
 
 if ($MakeNsisPath -and (Test-Path $MakeNsisPath)) {
-    $SetupExe = Join-Path $OutDir "GeminiDesk-$Version-windows-x86_64-setup.exe"
+    $SetupExe = Join-Path $OutDir "GeminiDesk-$Version-Windows-x64-Setup.exe"
     $NsiFile = Join-Path $PSScriptRoot "geminidesk.nsi"
     & $MakeNsisPath "/DPRODUCT_VERSION=$Version" "/DBINARY_PATH=$BinaryPath" "/DOUT_FILE=$SetupExe" $NsiFile
     if ($LASTEXITCODE -ne 0) {
         throw "makensis failed with exit code $LASTEXITCODE"
     }
     Write-Output ("Built NSIS Installer: {0} ({1:N0} bytes)" -f $SetupExe, (Get-Item $SetupExe).Length)
+} elseif ($RequireNsis) {
+    throw "makensis not found and -RequireNsis was specified."
 } else {
     Write-Warning "makensis not found; skipped NSIS installer compilation (Portable ZIP was created)."
 }

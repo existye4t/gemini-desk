@@ -38,7 +38,7 @@ use crate::webview::{
     HOST_COMPANION, HOST_MAIN, HOST_QUICK_CHAT, WebViewEngine, runtime_version_string,
 };
 
-const MAIN_WINDOW_TITLE: &str = "GeminiDesk — Unofficial Gemini Client";
+const MAIN_WINDOW_TITLE: &str = "GeminiDesk";
 const QUICK_CHAT_TITLE: &str = "GeminiDesk Quick Chat";
 const COMPANION_TITLE: &str = "GeminiDesk Companion";
 const BLUR_GRACE_PERIOD: Duration = Duration::from_millis(300);

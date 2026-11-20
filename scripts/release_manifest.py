@@ -10,9 +10,12 @@ Usage:
      detached Ed25519 signature `latest.json.sig`:
        python scripts/release_manifest.py \
          --version 0.4.0 \
-         --base-url https://github.com/geminidesk/geminidesk/releases/download/v0.4.0 \
+         --base-url https://github.com/existye4t/gemini-desk/releases/download/v0.4.0 \
          --dist-dir dist \
          --notes-file .github/RELEASE_NOTES_TEMPLATE.md
+
+  3) Verify a generated signature against a hex Ed25519 public verifying key:
+       python scripts/release_manifest.py --verify dist/latest.json dist/latest.json.sig <64-hex-pubkey>
 
 Supports Ed25519 via Python `cryptography` (or `openssl` CLI fallback) with zero hardcoded secrets.
 """
@@ -28,12 +31,11 @@ import tempfile
 from pathlib import Path
 
 ARTIFACT_RULES = [
-    ("windows-x86_64", "-windows-x86_64-setup.exe", "nsis_installer"),
-    ("windows-x86_64", "-x64-setup.exe", "nsis_installer"),
-    ("linux-x86_64", "-linux-x86_64.AppImage", "linux_app_image"),
-    ("linux-x86_64", "-linux-x86_64.tar.gz", "linux_tarball"),
-    ("macos-aarch64", "-macos-aarch64.dmg", "macos_dmg"),
-    ("macos-x86_64", "-macos-x86_64.dmg", "macos_dmg"),
+    ("windows-x86_64", "-Windows-x64-Setup.exe", "nsis_installer"),
+    ("linux-x86_64", "-Linux-x86_64.AppImage", "linux_app_image"),
+    ("linux-x86_64", "-Linux-x86_64.tar.gz", "linux_tarball"),
+    ("macos-aarch64", "-macOS-AppleSilicon.dmg", "macos_dmg"),
+    ("macos-x86_64", "-macOS-Intel.dmg", "macos_dmg"),
 ]
 
 
@@ -72,7 +74,6 @@ def sign_ed25519_hex(data: bytes, priv_hex: str) -> str:
         sk = Ed25519PrivateKey.from_private_bytes(raw_seed)
         return sk.sign(data).hex()
     except ImportError:
-        # Fallback using OpenSSL DER PKCS#8 wrapper for a raw 32-byte Ed25519 seed.
         pkcs8_prefix = bytes.fromhex("302e020100300506032b657004220420")
         with tempfile.TemporaryDirectory() as td:
             key_der = Path(td) / "key.der"
@@ -100,9 +101,35 @@ def sign_ed25519_hex(data: bytes, priv_hex: str) -> str:
             return sig_path.read_bytes().hex()
 
 
+def verify_ed25519_files(manifest_path: Path, sig_path: Path, pub_hex: str) -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    raw_pub = bytes.fromhex(pub_hex.strip())
+    if len(raw_pub) != 32:
+        raise ValueError("Public key must be 64 hex chars (32 bytes).")
+    manifest_bytes = manifest_path.read_bytes()
+    sig_raw = sig_path.read_bytes()
+    if len(sig_raw) == 64:
+        sig_bytes = sig_raw
+    else:
+        sig_bytes = bytes.fromhex(sig_raw.decode("utf-8").strip())
+    if len(sig_bytes) != 64:
+        raise ValueError("Ed25519 signature must be 64 bytes (or 128 hex chars).")
+
+    pk = Ed25519PublicKey.from_public_bytes(raw_pub)
+    pk.verify(sig_bytes, manifest_bytes)
+    print(f"Verified Ed25519 signature: {sig_path} matches {manifest_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build & sign GeminiDesk release metadata")
     parser.add_argument("--generate-keypair", action="store_true")
+    parser.add_argument(
+        "--verify",
+        nargs=3,
+        metavar=("MANIFEST", "SIG", "PUBKEY_HEX"),
+        help="Verify manifest signature against hex Ed25519 public key",
+    )
     parser.add_argument("--version", default="0.4.0")
     parser.add_argument("--base-url", default="")
     parser.add_argument("--dist-dir", default="dist")
@@ -112,6 +139,11 @@ def main() -> None:
 
     if args.generate_keypair:
         generate_keypair()
+        return
+
+    if args.verify:
+        manifest_p, sig_p, pub_hex = args.verify
+        verify_ed25519_files(Path(manifest_p), Path(sig_p), pub_hex)
         return
 
     dist_dir = Path(args.dist_dir)

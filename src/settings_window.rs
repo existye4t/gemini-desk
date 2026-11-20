@@ -80,7 +80,7 @@ impl SettingsWindow {
         proxy: EventLoopProxy<AppEvent>,
     ) -> Result<Self, String> {
         let mut wb = WindowBuilder::new()
-            .with_title("Settings — GeminiDesk")
+            .with_title("GeminiDesk Settings")
             .with_inner_size(LogicalSize::new(840.0, 600.0))
             .with_min_inner_size(LogicalSize::new(720.0, 500.0))
             .with_visible(false);

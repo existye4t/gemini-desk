@@ -28,12 +28,13 @@ use tracing::{info, warn};
 
 /// Default release manifest endpoint (overridable at build time via `GEMINIDESK_UPDATE_MANIFEST_URL`).
 pub const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/geminidesk/geminidesk/releases/latest/download/latest.json";
+    "https://github.com/existye4t/gemini-desk/releases/latest/download/latest.json";
 
 /// Compile-time pinned Ed25519 public verifying key (64 hex chars = 32 bytes).
-/// Injected by CI release workflows via `GEMINIDESK_UPDATER_PUBKEY`.
-/// Empty in local development builds -> updater fails closed with a clear status message.
+/// Overridable at compile time via `GEMINIDESK_UPDATER_PUBKEY` for key rotation.
 const EMBEDDED_PUBKEY_HEX: Option<&str> = option_env!("GEMINIDESK_UPDATER_PUBKEY");
+const DEFAULT_UPDATER_PUBKEY_HEX: Option<&str> =
+    Some("ce042ef3aa7286c10ae6fdd6a886cfee2bc7ec09cd24d1862ca878adc5b1b637");
 
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_SIG_BYTES: usize = 512;
@@ -143,7 +144,10 @@ impl UpdaterConfig {
         let manifest_url = option_env!("GEMINIDESK_UPDATE_MANIFEST_URL")
             .unwrap_or(DEFAULT_MANIFEST_URL)
             .to_string();
-        let verifying_key_bytes = EMBEDDED_PUBKEY_HEX.and_then(parse_hex_32);
+        let verifying_key_bytes = EMBEDDED_PUBKEY_HEX
+            .filter(|s| !s.trim().is_empty())
+            .or(DEFAULT_UPDATER_PUBKEY_HEX)
+            .and_then(parse_hex_32);
 
         Self {
             manifest_url,
@@ -440,6 +444,7 @@ pub fn launch_verified_installer(
             #[cfg(target_os = "windows")]
             {
                 std::process::Command::new(verified_path)
+                    .args(["/S", "/AUTORESTART"])
                     .spawn()
                     .map_err(|e| format!("Failed launching verified Windows installer: {e}"))?;
                 Ok(true)
@@ -529,28 +534,39 @@ fn fetch_bounded_bytes(
 
 fn validate_download_url(raw: &str, cfg: &UpdaterConfig) -> Result<(), String> {
     let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid update URL: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Update URL missing host.".to_string())?;
     let is_https = parsed.scheme() == "https";
 
     #[cfg(test)]
-    let allowed = is_https
-        || (cfg.allow_insecure_http_for_tests
-            && parsed.scheme() == "http"
-            && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost")));
-    #[cfg(not(test))]
-    let allowed = {
-        let _ = cfg;
-        is_https
-    };
+    if cfg.allow_insecure_http_for_tests
+        && parsed.scheme() == "http"
+        && matches!(host, "127.0.0.1" | "localhost")
+    {
+        return Ok(());
+    }
 
-    if !allowed {
+    if !is_https {
         return Err(format!(
             "Rejected non-HTTPS update URL scheme '{}'.",
             parsed.scheme()
         ));
     }
-    if parsed.host_str().is_none() {
-        return Err("Update URL missing host.".into());
+
+    let manifest_host = url::Url::parse(&cfg.manifest_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()));
+    let lower_host = host.to_ascii_lowercase();
+    let trusted_host = matches!(
+        lower_host.as_str(),
+        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
+    ) || manifest_host.as_deref() == Some(lower_host.as_str());
+
+    if !trusted_host {
+        return Err(format!("Rejected untrusted update download host '{host}'."));
     }
+
     Ok(())
 }
 
@@ -693,7 +709,7 @@ mod tests {
         let payload = b"verified-installer-bytes";
         let manifest_bytes = sample_manifest(
             "0.5.0",
-            "https://github.com/geminidesk/geminidesk/releases/download/v0.5.0/setup.exe",
+            "https://github.com/existye4t/gemini-desk/releases/download/v0.5.0/setup.exe",
             payload,
         );
         let sig = sk.sign(&manifest_bytes).to_bytes();
@@ -711,7 +727,7 @@ mod tests {
         let (sk, pk) = test_keypair();
         let manifest_bytes = sample_manifest(
             "0.5.0",
-            "https://github.com/geminidesk/geminidesk/releases/download/v0.5.0/setup.exe",
+            "https://github.com/existye4t/gemini-desk/releases/download/v0.5.0/setup.exe",
             b"legit",
         );
         let sig = sk.sign(&manifest_bytes).to_bytes();
@@ -731,7 +747,7 @@ mod tests {
         for older in ["0.4.0", "0.3.1", "0.4.0-beta.1"] {
             let bytes = sample_manifest(
                 older,
-                "https://github.com/geminidesk/geminidesk/releases/download/v0.4.0/setup.exe",
+                "https://github.com/existye4t/gemini-desk/releases/download/v0.4.0/setup.exe",
                 b"old",
             );
             let sig = sk.sign(&bytes).to_bytes();
@@ -756,7 +772,7 @@ mod tests {
         let (sk, pk) = test_keypair();
         let bytes = sample_manifest(
             "0.5.0",
-            "https://github.com/geminidesk/geminidesk/releases/download/v0.5.0/setup.exe",
+            "https://github.com/existye4t/gemini-desk/releases/download/v0.5.0/setup.exe",
             b"payload",
         );
         let sig = sk.sign(&bytes).to_bytes();
