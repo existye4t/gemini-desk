@@ -4,7 +4,7 @@ GeminiDesk is designed around strict isolation between Google's remote web appli
 
 ## Security Boundaries & Guarantees
 
-- **Zero credential interception:** Google authentication happens directly inside the native OS WebView. GeminiDesk never reads passwords, never extracts cookies from external browsers, and never runs a custom backend.
+- **Zero credential interception & no fake OAuth handoff (`src/auth.rs`):** Google authentication happens directly inside the native OS WebView via Google's official `accounts.google.com` endpoints with strict HTTPS host and `continue` redirect validation. GeminiDesk never reads passwords, never extracts cookies from Zen, Firefox, Chrome, Edge, or Safari, never spoofs browser User-Agents, never uses undocumented session exchange endpoints (`MergeSession`), and never runs a custom backend. On Unix systems, local config and WebView profile directories are restricted to owner-only permissions (`0700`).
 - **Strict domain allowlist (`src/navigation.rs`):** Only Google's official authentication domains (the 187 official regional SSO `supported_domains`), Gemini app origins, and Google Workspace file pickers are permitted in-app. External URLs open in your system default browser; unsafe schemes (`file:`, `javascript:`, `data:`) are blocked.
 - **Redacted logs:** URL query strings and fragments are stripped before writing logs so OAuth/session parameters are never printed.
 - **Isolated local UIs (`src/ui_assets.rs`):** Settings and Prompt Review sheets run in lazy-created local WebViews served from memory via `geminidesk://` with strict CSP (`default-src 'none'`), zero remote network access, and zero IPC exposed to `gemini.google.com`.

@@ -109,7 +109,7 @@ gemini-desk/
 
 - **Version:** `0.4.0`
 - **Windows 11 (`x86_64-pc-windows-msvc`):** **Production-Verified on Real Hardware.** Compiled, all 31 unit tests pass, packaged into per-user NSIS installer (`GeminiDesk-0.4.0-Windows-x64-Setup.exe`) and Portable ZIP (`GeminiDesk-0.4.0-Windows-x64-Portable.zip`), installer lifecycle verified, end-to-end auto-update lifecycle (`0.3.9` → `0.4.0` with `/S /AUTORESTART`) verified, and 30s settled performance benchmarks recorded.
-- **Linux (`x86_64-unknown-linux-gnu`):** **Implemented, Compiled, Packaged & CI-Validated (`ubuntu-24.04`); Real-Hardware CachyOS Validation Next.** Compiles cleanly with `cargo clippy --all-targets -- -D warnings`, passes all 31 unit tests in CI, passes `desktop-file-validate` and `appstreamcli validate --no-net`, and builds `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, and Arch `PKGBUILD`.
+- **Linux (`x86_64-unknown-linux-gnu`):** **Desktop-Verified on Real CachyOS Hardware (`Linux 7.3.4-1-cachyos` · KDE Plasma 6 · Wayland · WebKitGTK `2.54.3`); Interactive User Google Sign-In Test Ready.** Compiles cleanly with `cargo clippy --all-targets -- -D warnings`, passes all 38 unit tests, passes `desktop-file-validate` and `appstreamcli validate --no-net`, builds native CachyOS/Arch `.pkg.tar.zst` via `makepkg` (`2.49 MB`), and is verified on real KDE Plasma 6 Wayland hardware (single-WebView reparenting across Main/Quick Chat/Companion in `0–2 ms`, `ksni` tray, XDG `GlobalShortcuts`/`Screenshot`/`Settings` portals, native Klipper D-Bus + GTK3 clipboard, `/proc` telemetry, and settled benchmarks). Google `accounts.google.com` renders cleanly in WebKitGTK `2.54.3` without embedded-browser rejection; final interactive sign-in & restart persistence confirmation awaits user participation.
 - **macOS (`aarch64-apple-darwin` & `x86_64-apple-darwin`):** **Implemented, Compiled, Packaged & CI-Validated (`macos-15`); Real-Hardware macOS & Apple Developer ID Notarization Pending.** Compiles cleanly for both Apple Silicon and Intel with `-D warnings`, passes all 31 unit tests on `macos-15`, and builds verified `.app` and `.dmg` bundles.
 
 ---
@@ -159,7 +159,7 @@ gemini-desk/
 | Platform | Target Triple | WebView Engine | Current Label | What Is Verified vs. Pending |
 | --- | --- | --- | --- | --- |
 | **Windows 11** | `x86_64-pc-windows-msvc` | Microsoft Edge WebView2 | **Verified (Supported)** | Real-hardware verified: Google sign-in, session persistence, Quick Chat, Companion, tray, global hotkeys, all 6 productivity tools, NSIS installer/upgrade/uninstall, E2E auto-update, and 30s settled benchmarks. |
-| **Linux (CachyOS / Arch · KDE Plasma Wayland)** | `x86_64-unknown-linux-gnu` | WebKitGTK 4.1 (`webkit2gtk-4.1`) | **Experimental** *(Next Task)* | Compiled & tested in Ubuntu 24.04 CI; `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `PKGBUILD`, `.desktop`, and AppStream metadata validated. **Pending on real CachyOS hardware:** interactive Google sign-in in WebKitGTK, KDE Plasma Wayland reparenting visuals, `ksni` tray clicks, XDG `GlobalShortcuts` & `Screenshot` portals, `wl-clipboard` handoff, and `/proc` performance benchmarks. |
+| **Linux (CachyOS / Arch · KDE Plasma Wayland)** | `x86_64-unknown-linux-gnu` | WebKitGTK 4.1 (`webkit2gtk-4.1`) | **Beta (Desktop Verified)** | Real-hardware verified on CachyOS (`Linux 7.3.4-1-cachyos`, KDE Plasma 6 Wayland, WebKitGTK `2.54.3`): single-WebView reparenting (`0–2 ms`), `780 × 580` Quick Chat & `490 × 700` Companion, `ksni` tray, XDG `GlobalShortcuts` (`org.freedesktop.host.portal.Registry` `io.geminidesk.GeminiDesk`), XDG `Screenshot` & `Settings` portals, native KDE Klipper D-Bus + GTK3 clipboard, `/proc` performance benchmarks, and native `makepkg` `.pkg.tar.zst` package (`2.49 MB`). Interactive user Google sign-in + restart persistence test ready. |
 | **macOS (Apple Silicon & Intel)** | `aarch64-apple-darwin`, `x86_64-apple-darwin` | WKWebView | **Experimental** | Compiled & unit-tested on `macos-15` CI; unsigned `.app` and `.dmg` bundles verified via `file`, `otool -L`, and `hdiutil verify`. **Pending:** real-hardware WKWebView Google sign-in test and Apple Developer ID signing + `notarytool` notarization secrets. |
 
 ---
@@ -224,6 +224,19 @@ gemini-desk/
   - **Floating Companion Idle (`12s` settled):** 8 processes (`1` renderer), Rust Host `5.22 MB` Priv / `0.000%` CPU, Full Tree `727.28 MB` Priv / `988.28 MB` WS / `5.816%` CPU.
   - **Background Tray — Balanced (`30s` settled):** 8 processes, Rust Host `4.89 MB` Priv / `0.017%` CPU, Full Tree `291.36 MB` Priv / `224.24 MB` WS / `0.321%` CPU.
   - **Background Tray — All 6 Features + Efficiency Safe-Suspended (`30s` settled):** 8 processes, Rust Host **`4.73 MB` Priv / `0.000%` CPU**, Full Tree `285.34 MB` Priv / **`78.02 MB` WS** (Renderer WS: **`0.92 MB`**) / **`0.052%` CPU**.
+
+### Measured CachyOS Linux Benchmarks (`v0.4.0`, Release Binary `5.21 MB`, Arch Package `2.49 MB`)
+- **Environment:** `Linux 7.3.4-1-cachyos x86_64`, 6 logical cores, AMD Radeon RX 6600, KDE Plasma 6 Wayland, `webkit2gtk-4.1` `2.54.3-1`, `gtk3` `3.24.52`.
+- **Startup Timings:**
+  - Native windows ready: `134–149 ms`
+  - WebKitGTK initialized: `186–208 ms`
+  - First navigation dispatched: `249–267 ms`
+  - First visible Gemini document title: `723–815 ms`
+  - Quick Chat / Companion reparent latency: `0–2 ms`
+- **Resource Consumption (`/proc/<pid>/smaps_rollup` `Private_Clean + Private_Dirty` & `Rss`):**
+  - **Gemini Home Idle:** 3 processes (`1` `WebKitWebProcess` renderer), Rust Host `49.57 MB` Priv, Full Tree `522.74 MB` Priv / `740.96 MB` RSS.
+  - **Floating Companion Idle:** 3 processes (`1` renderer), Full Tree `530.16 MB` Priv / `747.52 MB` RSS.
+  - **Background System Tray (`--minimized`):** 3 processes, Rust Host **`47.11 MB` Priv / `0.067%` CPU**, Full Tree `500.76 MB` Priv / `720.14 MB` RSS / **`0.533%` CPU**.
 
 ---
 

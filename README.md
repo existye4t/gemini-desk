@@ -27,8 +27,8 @@ GeminiDesk only labels a platform **Supported** after real-hardware verification
 | Platform | Target / WebView | Status | Packages | Verification Notes |
 | --- | --- | --- | --- | --- |
 | **Windows 11 (x64)** | `x86_64-pc-windows-msvc` · **WebView2** | **Verified (Supported)** | NSIS Per-User Installer (`1.19 MB`), Portable ZIP (`1.37 MB`) | Real-hardware verified: Google auth, session persistence, Quick Chat, Companion, tray, shortcuts, productivity, installer/upgrade/uninstall, and controlled benchmarks. |
-| **Linux — CachyOS / Arch (KDE Plasma · Wayland)** | `x86_64-unknown-linux-gnu` · **WebKitGTK 4.1** | **Experimental** *(Real-Device Testing Pending)* | Arch `PKGBUILD`, `.deb`, `.rpm`, lean `AppImage` | Implemented: `build_gtk` Wayland WebView + reparent, XDG Portals (`GlobalShortcuts`, interactive `Screenshot`, `Settings`), `ksni` StatusNotifierItem tray, `wl-clipboard`, `/proc` telemetry, Unix-socket CLI wake. Real-device WebKitGTK Google auth & portal verification pending. |
-| **Linux — X11 / GNOME** | `x86_64-unknown-linux-gnu` · **WebKitGTK 4.1** | **Experimental** *(Real-Device Testing Pending)* | `.deb`, `.rpm`, lean `AppImage` | Implemented: X11 `global-hotkey`, `xclip`/`xsel`, XDG `Screenshot` & `Settings` portals. Real-device verification pending. |
+| **Linux — CachyOS / Arch (KDE Plasma · Wayland)** | `x86_64-unknown-linux-gnu` · **WebKitGTK 4.1** | **Beta** *(Desktop Verified · Interactive Auth Test Ready)* | Arch `PKGBUILD` (`2.49 MB` `.pkg.tar.zst`), `.deb`, `.rpm`, lean `AppImage` | Real-hardware verified on CachyOS (`Linux 7.3.4-1-cachyos`, KDE Plasma 6 Wayland, WebKitGTK `2.54.3`): single-WebView reparenting (`0–2 ms`), `780×580` Quick Chat, Companion, XDG Portals (`GlobalShortcuts`, interactive `Screenshot`, `Settings`), `ksni` tray, native KDE Klipper D-Bus + GTK3 clipboard, `/proc` telemetry, Unix-socket CLI wake, and `makepkg` package build. Interactive Google sign-in + restart persistence ready for user verification. |
+| **Linux — X11 / GNOME** | `x86_64-unknown-linux-gnu` · **WebKitGTK 4.1** | **Experimental** *(Real-Device Testing Pending)* | `.deb`, `.rpm`, lean `AppImage` | Implemented: X11 `global-hotkey`, GTK3 clipboard + `xclip`/`xsel`, XDG `Screenshot` & `Settings` portals. Real-device verification pending. |
 | **macOS — Apple Silicon & Intel** | `aarch64` / `x86_64-apple-darwin` · **WKWebView** | **Experimental** *(Real-Device Testing Pending)* | `.app` bundle, `.dmg` *(unsigned until Apple Developer secrets configured)* | Implemented: `WKWebView` reparenting, native App Menu Bar, Dock reopen, LaunchAgent startup, `NSPasteboard`, interactive `screencapture -i`, `ps` telemetry. Real-device WKWebView Google auth & Gatekeeper notarization pending. |
 
 ---
@@ -36,7 +36,8 @@ GeminiDesk only labels a platform **Supported** after real-hardware verification
 ## Features (`v0.4.0`)
 
 ### Desktop Shell & Settings
-- **Two-Column Settings (`Ctrl + ,` / `Cmd + ,` or Tray → Settings):** 8 sections (*General*, *Appearance*, *Shortcuts*, *Quick Chat*, *Productivity*, *Performance*, *Privacy*, *About*) with monochrome Dark (`#0B0B0C`) and independently calibrated Light (`#FFFFFF`) themes, bundled Geist + Geist Mono typography, custom popover dropdowns, sliding segmented controls, click-to-record `<kbd>` shortcut recorders, inline confirmation dialogs, `prefers-reduced-motion` support, and zero idle RAM when closed.
+- **Two-Column Settings (`Ctrl + ,` / `Cmd + ,` or Tray → Settings):** 9 sections (*General*, *Account*, *Appearance*, *Shortcuts*, *Quick Chat*, *Productivity*, *Performance*, *Privacy*, *About*) with monochrome Dark (`#0B0B0C`) and independently calibrated Light (`#FFFFFF`) themes, bundled Geist + Geist Mono typography, custom popover dropdowns, sliding segmented controls, click-to-record `<kbd>` shortcut recorders, inline confirmation dialogs, `prefers-reduced-motion` support, and zero idle RAM when closed.
+- **Google Account & Sign-In (`Settings → Account`, Tray → *Google Account & Sign-In...*, or `--account` / `--sign-in`):** Direct Google Account Chooser, Switch/Add Account, Sign Out, live session status, persistent WebView profile indicator, and an explicitly labeled *Open Gemini in Default Browser* fallback (without fake OAuth handoffs or browser cookie extraction).
 - **Persistent System Tray:** Event-driven (`0.000%` Rust idle CPU) native tray on Windows (Win32), Linux (`ksni` StatusNotifierItem over D-Bus — native KDE Plasma support with zero `libappindicator3` dependency), and macOS (Menu Bar + Status Item).
 - **Single-Instance Activation:** Secondary invocations with CLI flags (`--quick-chat`, `--companion`, `--settings`, `--clipboard-actions`, `--ask-selection`, `--screenshot`) wake the running instance instantaneously via Win32 messages (Windows) or Unix domain sockets (Linux/macOS).
 
@@ -178,7 +179,9 @@ cargo build --release --locked
 - `--minimized` / `--tray`: Start quietly in the system tray.
 - `--quick-chat`: Launch or wake directly into Quick Chat.
 - `--companion`: Launch or wake directly into Floating Companion.
-- `--settings` / `--settings=<tab>`: Open Settings (e.g., `--settings=about`, `--settings=performance`).
+- `--settings` / `--settings=<tab>`: Open Settings (e.g., `--settings=account`, `--settings=about`, `--settings=performance`).
+- `--account`: Open Settings directly on the Google Account & Sign-In tab.
+- `--sign-in`: Open the Main Window directly to Google's official Account Chooser (`accounts.google.com/AccountChooser`).
 - `--clipboard-actions`: Open Clipboard Actions command palette.
 - `--ask-selection`: Open Ask Gemini with Selection sheet.
 - `--screenshot`: Trigger interactive Screenshot to Gemini capture.
@@ -205,7 +208,25 @@ Measured on Windows 11 Pro (Build 26300, x64, 6 logical cores, WebView2 Runtime 
 | Background Tray — **Balanced** (30s) | `284.2 MB` Priv · `241.6 MB` WS · `0.417%` CPU | **`291.36 MB` Priv · `224.24 MB` WS · `0.321%` CPU** | Instant wake |
 | Background Tray — **Efficiency Safe-Suspended** (30s) | `282.9 MB` Priv · `64.2 MB` WS · `0.061%` CPU | **`285.34 MB` Priv · `78.02 MB` WS · `0.052%` CPU** | Renderer WS: **`0.92 MB`**; Rust CPU: **`0.000%`**; Quick Chat wake **`21 ms`** |
 
-*Linux (`WebKitGTK`) and macOS (`WKWebView`) benchmarks will be added only after real-hardware measurement; Windows WebView2 measurements must not be assumed to generalize to other OSes.*
+---
+
+## Measured CachyOS Linux Performance (`v0.4.0`, Release Build)
+
+Measured on CachyOS Linux (`Linux 7.3.4-1-cachyos`, `x86_64`, 6 logical cores, AMD Radeon RX 6600, KDE Plasma 6 Wayland, `webkit2gtk-4.1` `2.54.3-1`, `gtk3` `3.24.52`) across the full `/proc` process tree (`smaps_rollup` `Private_Clean + Private_Dirty` and `Rss`):
+
+| Scenario / Metric | `v0.4.0` CachyOS Wayland | Notes |
+| --- | --- | --- |
+| Release executable size | **`5.21 MB` (`5,468,008 B`)** | Links system `libwebkit2gtk-4.1.so`, `libgtk-3.so`, and `libssl.so` |
+| Native Arch/CachyOS Package (`makepkg`) | **`2.49 MB` (`2,612,210 B`)** | `geminidesk-0.4.0-1-x86_64.pkg.tar.zst` (binary, `.desktop`, AppStream XML, hicolor SVG/PNG icons, licenses) |
+| Native windows ready | **`134–149 ms`** | GTK3 Wayland + XDG Settings Portal dark-mode query |
+| WebKitGTK initialized | **`186–208 ms`** | Persistent `WebsiteDataManager` (`~/.local/share/geminidesk/webview`) |
+| First navigation dispatched | **`249–267 ms`** | `https://gemini.google.com/app` |
+| First visible Gemini title | **`723–815 ms`** | Includes network round-trip |
+| Quick Chat / Companion reparent latency | **`0–2 ms`** | Single shared `WebKitWebView` moved across GTK containers |
+| Process count (Main / Quick Chat / Companion / Tray) | **`3` processes (`1` renderer)** | `gemini-desk` (Rust Host) + `1` `WebKitWebProcess` + `1` `WebKitNetworkProcess` |
+| Visible Gemini Home (settled) | **`522.74 MB` Priv · `740.96 MB` RSS** | Rust Host: `49.57 MB` Priv (includes in-process GTK3/Mesa Wayland surfaces); Renderer: `434.81 MB` Priv; Network: `38.36 MB` Priv |
+| Floating Companion Idle (settled) | **`530.16 MB` Priv · `747.52 MB` RSS** | Zero extra `WebKitWebProcess` renderers |
+| Background System Tray (`--minimized`, settled) | **`500.76 MB` Priv · `720.14 MB` RSS · `0.533%` CPU** | Rust Host Private: `47.11 MB` · Rust Host CPU: **`0.067%`** |
 
 ---
 
@@ -249,7 +270,7 @@ GeminiDesk authenticates release manifests (`latest.json` + `latest.json.sig`) u
 
 ## Known Limitations
 
-- **Linux (`WebKitGTK`) & macOS (`WKWebView`) Google Authentication:** Google sometimes challenges or blocks embedded WebKit sign-in (`accounts.google.com`) compared to WebView2 (Chromium). GeminiDesk refuses to spoof browsers or harvest external browser cookies. Both platforms remain labeled **Experimental** until real-device sign-in verification completes.
+- **External Browser → WebView Session Handoff Not Supported by Google:** Google's consumer Gemini web application (`https://gemini.google.com/app`) authenticates strictly via first-party Google web session cookies (`accounts.google.com` → `SetSID`) rather than third-party OAuth 2.0 access/ID tokens. Google provides no public API to convert an external-browser OAuth login into `gemini.google.com` session cookies, and GeminiDesk refuses to fake OAuth, scrape external browser cookie databases (Zen/Firefox/Chrome/Safari), spoof User-Agents, or call undocumented endpoints (`MergeSession`). GeminiDesk uses Google's genuine in-WebView Account Chooser / Sign-In flow with persistent native WebView storage and provides an explicit *Open Gemini in Default Browser* fallback if Google ever challenges an embedded WebView.
 - **macOS Signing & Notarization:** Automated signing and notarization are wired into `packaging/macos/build-bundle.sh` and `.github/workflows/release.yml`, but require Apple Developer credentials in repository secrets before distributing publicly.
 - **Google-hosted "Download app" button:** Intentionally left unmodified inside `gemini.google.com` to avoid DOM injection or header spoofing.
 

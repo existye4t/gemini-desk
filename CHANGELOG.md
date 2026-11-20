@@ -8,14 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Sema
 ## [0.4.0] — 2026-11-20 (First Public Beta Candidate)
 
 ### Added
-- **Cross-Platform Linux Implementation (Experimental — Real-Device Testing Pending):**
-  - Native `WebKitGTK` integration via `WebViewBuilderExtUnix::build_gtk` + single-WebView `reparent` across Main, Quick Chat, and Floating Companion (Wayland & X11 compatible).
-  - XDG Desktop Portal support via D-Bus (`zbus`): `Settings` color-scheme detection, `GlobalShortcuts` portal for KDE Plasma 6 / Wayland, and interactive `Screenshot` portal (`interactive = true`) with `spectacle` / `grim`+`slurp` fallback.
+- **Google Account & Authentication Lifecycle (`src/auth.rs`, Settings → Account, Tray → *Google Account & Sign-In...*):**
+  - Typed authentication state machine (`Checking`, `Authenticated`, `SignedOut`, `SigningIn`, `AuthError`) with flow-generation correlation, cancellation handling, strict HTTPS host & `continue` redirect validation, and event-driven non-invasive session detection.
+  - Native in-app **Sign in with Google** (`AccountChooser`), **Switch / Add Account** (`AddSession`), **Sign Out** (`Logout` with confirmation dialog), and an explicitly labeled **Open Gemini in Default Browser** fallback (honestly documenting that Google does not support transferring external-browser OAuth logins into consumer `gemini.google.com` WebView cookies).
+  - CLI flags `--account` and `--sign-in`, plus Unix `0700` permission hardening for local config/profile directories and WebKitGTK ITP/cookie-policy configuration for reliable cross-subdomain Google SSO persistence on Linux.
+- **Cross-Platform Linux Implementation (Desktop Verified on CachyOS · KDE Plasma 6 · Wayland):**
+  - Native `WebKitGTK 4.1` (`2.54.3`) integration via `WebViewBuilderExtUnix::build_gtk` + single-WebView `reparent` across Main, Quick Chat (`780 × 580`), and Floating Companion (`490 × 700`) with automatic `WEBKIT_DISABLE_DMABUF_RENDERER=1` multi-toplevel Wayland surface compatibility and native GTK keyboard accelerators (`Esc`, `Ctrl+,`, `Ctrl+Shift+E`, `Ctrl+Shift+T`).
+  - XDG Desktop Portal support via D-Bus (`zbus`): `org.freedesktop.host.portal.Registry` host `app_id` registration (`io.geminidesk.GeminiDesk`), `Settings` color-scheme detection, `GlobalShortcuts` portal for KDE Plasma 6 / Wayland, and interactive `Screenshot` portal (`interactive = true`) with `spectacle` / `grim`+`slurp` fallback.
   - Pure-Rust `ksni` StatusNotifierItem system tray (no `libappindicator3` shared-library requirement on Arch / CachyOS KDE Plasma).
-  - Wayland (`wl-clipboard`) & X11 (`xclip`/`xsel`) clipboard + primary selection support.
-  - Unix domain socket single-instance activation (`$XDG_RUNTIME_DIR/io.geminidesk.GeminiDesk.sock`) for instant wake from CLI flags (`--quick-chat`, `--companion`, `--screenshot`, `--clipboard-actions`, `--ask-selection`).
-  - `/proc` process-tree & role telemetry (`WebKitWebProcess`, `WebKitGPUProcess`, `WebKitNetworkProcess`).
-  - Linux packages: Arch / CachyOS `PKGBUILD`, `.deb`, `.rpm`, lean `AppImage` builder, `.desktop` with KDE Kickoff actions, and AppStream `metainfo.xml`.
+  - Out-of-the-box Linux clipboard & selection integration supporting KDE Plasma's `org.kde.klipper` D-Bus service, in-process GTK3 `gtk::Clipboard` (text, primary selection, and `gdk-pixbuf` PNG images), `wl-clipboard`, and `xclip`/`xsel`.
+  - Unix domain socket single-instance activation (`$XDG_RUNTIME_DIR/io.geminidesk.GeminiDesk.sock`) for instant wake from CLI flags (`--quick-chat`, `--companion`, `--settings=<tab>`, `--screenshot`, `--clipboard-actions`, `--ask-selection`).
+  - `/proc` process-tree & role telemetry (`WebKitWebProcess`, `WebKitGPUProcess`, `WebKitNetworkProcess`) and safe WebKitGTK cache cleanup (`WebKitCache`, `CacheStorage`) preserving cookies and local storage.
+  - Linux packages: Arch / CachyOS `PKGBUILD` (supporting both local checkout and release archive builds), `.deb`, `.rpm`, lean `AppImage` builder, `.desktop` with KDE Kickoff actions, and AppStream `metainfo.xml`.
 - **Cross-Platform macOS Implementation (Experimental — Real-Device Testing Pending):**
   - Native `WKWebView` single-WebView reparenting, `NSUserDefaults` dark-mode detection, `NSWindow` floating Spaces behavior & Companion opacity, native `muda` macOS App Menu Bar (`Cmd+C/V/X/A/Z`, `Cmd+,`, `Cmd+N`, `Cmd+Q`), Dock `Event::Reopen` handling, LaunchAgent startup plist, `pbcopy`/`pbpaste` + `NSPasteboardTypePNG` clipboard, interactive `/usr/sbin/screencapture -i`, and `ps` process-tree telemetry.
   - `.app` & `.dmg` packaging pipeline with `Info.plist`, Hardened Runtime `entitlements.plist`, and conditional Developer ID signing + Apple `notarytool` notarization.
