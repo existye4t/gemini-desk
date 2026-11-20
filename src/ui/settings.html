@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GeminiDesk Settings</title>
+<style>
+  :root {
+    --bg: #131314;
+    --surface: #1e1f20;
+    --surface-hover: #282a2c;
+    --border: #2e3033;
+    --text: #e3e3e3;
+    --text-muted: #9aa0a6;
+    --accent: #a8c7fa;
+    --accent-bg: #0842a0;
+    --accent-text: #062e6f;
+    --ok: #81c995;
+    --warn: #fdd663;
+    --input-bg: #131314;
+    --radius: 12px;
+  }
+
+  [data-theme="light"] {
+    --bg: #ffffff;
+    --surface: #f0f4f9;
+    --surface-hover: #e5ebf3;
+    --border: #dde3ea;
+    --text: #1f1f1f;
+    --text-muted: #5f6368;
+    --accent: #0b57d0;
+    --accent-bg: #d3e3fd;
+    --accent-text: #ffffff;
+    --ok: #137333;
+    --warn: #b06000;
+    --input-bg: #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+
+  .container {
+    max-width: 620px;
+    margin: 0 auto;
+    padding: 20px 22px 28px;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+
+  .title-block h1 {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .title-block p {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 16px;
+    margin-bottom: 14px;
+  }
+
+  .section-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 14px 0 6px 2px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .row:last-child {
+    border-bottom: none;
+  }
+
+  .row-col {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .label-group {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .label-title {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .label-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* Toggle Switch */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .slider {
+    position: absolute;
+    inset: 0;
+    cursor: pointer;
+    background: var(--border);
+    border-radius: 999px;
+    transition: background 0.16s ease;
+  }
+
+  .slider::before {
+    content: "";
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    top: 3px;
+    background: #ffffff;
+    border-radius: 50%;
+    transition: transform 0.16s ease;
+  }
+
+  input:checked + .slider {
+    background: var(--accent);
+  }
+
+  input:checked + .slider::before {
+    transform: translateX(18px);
+    background: var(--accent-text);
+  }
+
+  select, input[type="text"] {
+    background: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  select:focus, input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+
+  .shortcut-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .shortcut-input {
+    width: 175px;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 12.5px;
+  }
+
+  .btn {
+    background: var(--surface-hover);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.14s ease, border-color 0.14s ease;
+  }
+
+  .btn:hover {
+    border-color: var(--accent);
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: transparent;
+  }
+
+  .btn-primary:hover {
+    opacity: 0.92;
+  }
+
+  .btn-chip {
+    padding: 3px 8px;
+    font-size: 11.5px;
+    border-radius: 6px;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .status-line {
+    font-size: 11.5px;
+    margin-top: 4px;
+  }
+
+  .status-ok { color: var(--ok); }
+  .status-warn { color: var(--warn); }
+
+  .mono-path {
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    word-break: break-all;
+    user-select: text;
+  }
+
+  .about-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 6px 12px;
+    padding: 10px 0;
+    font-size: 12.5px;
+  }
+
+  .about-key { color: var(--text-muted); }
+  .about-val { color: var(--text); user-select: text; }
+
+  .disclaimer {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    padding: 8px 0 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 14px;
+    right: 18px;
+    background: var(--surface-hover);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+    pointer-events: none;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-block">
+        <h1>GeminiDesk Settings</h1>
+        <p>Unofficial lightweight Rust desktop client for Google Gemini</p>
+      </div>
+      <span class="badge" id="version-badge">v0.2.0</span>
+    </header>
+
+    <div class="section-title">General &amp; Window Behavior</div>
+    <section>
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">Launch at Windows startup</div>
+          <div class="label-desc">Starts silently in the system tray ready for Quick Chat.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="launch_at_startup" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">Close button behavior</div>
+          <div class="label-desc">Choose what happens when clicking X on the main window.</div>
+        </div>
+        <select id="close_behavior">
+          <option value="minimize_to_tray">Hide to system tray</option>
+          <option value="quit">Quit GeminiDesk</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">Minimize to system tray</div>
+          <div class="label-desc">Hide from taskbar into the tray when minimizing the main window.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="minimize_to_tray" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">Appearance</div>
+          <div class="label-desc">Controls native window title bar, Quick Chat border, and WebView theme.</div>
+        </div>
+        <select id="theme">
+          <option value="system">System default</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+    </section>
+
+    <div class="section-title">Quick Chat &amp; Global Shortcuts</div>
+    <section>
+      <div class="row row-col">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div class="label-group">
+            <div class="label-title">Quick Chat shortcut</div>
+            <div class="label-desc">Summons floating Quick Chat over any app. Press Esc to hide, Ctrl+Shift+E to expand.</div>
+          </div>
+          <div class="shortcut-controls">
+            <input type="text" class="shortcut-input" id="quick_chat_shortcut" placeholder="Alt+Space" />
+            <button class="btn btn-primary" id="apply_shortcuts">Apply</button>
+          </div>
+        </div>
+        <div class="chips">
+          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Alt+Space">Alt+Space</button>
+          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Ctrl+Alt+G">Ctrl+Alt+G</button>
+          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Alt+G">Alt+G</button>
+          <button class="btn btn-chip" data-target="quick_chat_shortcut" data-val="Ctrl+Shift+Space">Ctrl+Shift+Space</button>
+        </div>
+        <div class="status-line" id="quick_chat_status"></div>
+      </div>
+
+      <div class="row row-col">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div class="label-group">
+            <div class="label-title">Full Gemini Window shortcut</div>
+            <div class="label-desc">Opens or focuses the full Gemini workspace window from anywhere.</div>
+          </div>
+          <input type="text" class="shortcut-input" id="full_window_shortcut" placeholder="Alt+Shift+Space" />
+        </div>
+        <div class="status-line" id="full_window_status"></div>
+      </div>
+
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">Hide Quick Chat when clicking outside</div>
+          <div class="label-desc">Automatically dismisses the floating overlay when another window receives focus.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="quick_chat_hide_on_blur" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <div class="section-title">Performance &amp; Storage</div>
+    <section>
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">Reduce background memory when hidden</div>
+          <div class="label-desc">Switches WebView2 to Low memory usage target while minimized to tray, preserving sessions.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="reduce_memory_when_hidden" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">WebView cache (<span id="cache_size">Calculating...</span>)</div>
+          <div class="label-desc">Clears HTTP, shader, and code caches without signing you out of Google.</div>
+        </div>
+        <button class="btn" id="clear_cache_btn">Clear Cache</button>
+      </div>
+
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">WebView profile location</div>
+          <div class="mono-path" id="profile_path">—</div>
+        </div>
+        <button class="btn" id="open_profile_btn">Open Folder</button>
+      </div>
+    </section>
+
+    <div class="section-title">About</div>
+    <section>
+      <div class="about-grid">
+        <div class="about-key">Application</div>
+        <div class="about-val">GeminiDesk <span id="about_version"></span></div>
+        <div class="about-key">Engine</div>
+        <div class="about-val">Rust + tao + wry (Native System WebView)</div>
+        <div class="about-key">WebView Runtime</div>
+        <div class="about-val" id="webview_version">—</div>
+      </div>
+      <div class="disclaimer">
+        GeminiDesk is an unofficial, independent desktop client for Google Gemini. It is not affiliated with, endorsed by, or sponsored by Google. All Google accounts, authentication, conversations, and subscriptions are handled directly by Google.
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let toastTimer = null;
+
+  function showToast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let v = bytes;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  function post(payload) {
+    window.ipc.postMessage(JSON.stringify(payload));
+  }
+
+  function readFormConfig() {
+    return {
+      launch_at_startup: $('launch_at_startup').checked,
+      minimize_to_tray: $('minimize_to_tray').checked,
+      close_behavior: $('close_behavior').value,
+      quick_chat_shortcut: $('quick_chat_shortcut').value.trim(),
+      full_window_shortcut: $('full_window_shortcut').value.trim(),
+      quick_chat_hide_on_blur: $('quick_chat_hide_on_blur').checked,
+      theme: $('theme').value,
+      reduce_memory_when_hidden: $('reduce_memory_when_hidden').checked,
+    };
+  }
+
+  function saveNow(feedback) {
+    post({ type: 'save_config', config: readFormConfig() });
+    if (feedback) showToast(feedback);
+  }
+
+  window.__geminidesk_apply_state = function(state) {
+    document.documentElement.setAttribute('data-theme', state.effective_dark ? 'dark' : 'light');
+
+    const c = state.config;
+    $('launch_at_startup').checked = !!c.launch_at_startup;
+    $('minimize_to_tray').checked = !!c.minimize_to_tray;
+    $('close_behavior').value = c.close_behavior;
+    $('quick_chat_shortcut').value = c.quick_chat_shortcut || '';
+    $('full_window_shortcut').value = c.full_window_shortcut || '';
+    $('quick_chat_hide_on_blur').checked = !!c.quick_chat_hide_on_blur;
+    $('theme').value = c.theme;
+    $('reduce_memory_when_hidden').checked = !!c.reduce_memory_when_hidden;
+
+    $('version-badge').textContent = 'v' + state.version;
+    $('about_version').textContent = 'v' + state.version;
+    $('webview_version').textContent = state.webview_version;
+    $('profile_path').textContent = state.profile_path;
+    $('cache_size').textContent = formatBytes(state.cache_size_bytes);
+
+    const qs = $('quick_chat_status');
+    if (state.hotkeys.quick_chat_error) {
+      qs.className = 'status-line status-warn';
+      qs.textContent = 'Warning: ' + state.hotkeys.quick_chat_error;
+    } else if (state.hotkeys.quick_chat_registered) {
+      qs.className = 'status-line status-ok';
+      qs.textContent = 'Active global shortcut';
+    } else {
+      qs.className = 'status-line';
+      qs.textContent = 'Disabled';
+    }
+
+    const fs = $('full_window_status');
+    if (state.hotkeys.full_window_error) {
+      fs.className = 'status-line status-warn';
+      fs.textContent = 'Warning: ' + state.hotkeys.full_window_error;
+    } else if (state.hotkeys.full_window_registered) {
+      fs.className = 'status-line status-ok';
+      fs.textContent = 'Active global shortcut';
+    } else {
+      fs.className = 'status-line';
+      fs.textContent = 'Disabled';
+    }
+
+    if (state.toast) showToast(state.toast);
+  };
+
+  for (const id of [
+    'launch_at_startup',
+    'minimize_to_tray',
+    'close_behavior',
+    'quick_chat_hide_on_blur',
+    'theme',
+    'reduce_memory_when_hidden',
+  ]) {
+    $(id).addEventListener('change', () => saveNow('Settings saved'));
+  }
+
+  $('apply_shortcuts').addEventListener('click', () => saveNow('Shortcuts updated'));
+  for (const id of ['quick_chat_shortcut', 'full_window_shortcut']) {
+    $(id).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveNow('Shortcuts updated');
+    });
+  }
+
+  document.querySelectorAll('.btn-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = $(btn.dataset.target);
+      target.value = btn.dataset.val;
+      saveNow('Shortcut updated to ' + btn.dataset.val);
+    });
+  });
+
+  $('clear_cache_btn').addEventListener('click', () => {
+    post({ type: 'clear_cache' });
+  });
+
+  $('open_profile_btn').addEventListener('click', () => {
+    post({ type: 'open_profile_folder' });
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') post({ type: 'close' });
+  });
+
+  post({ type: 'ready' });
+</script>
+</body>
+</html>
