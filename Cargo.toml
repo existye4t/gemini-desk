@@ -124,6 +124,6 @@ assets = [
     { source = "assets/icons/geminidesk-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.geminidesk.GeminiDesk.png", mode = "0644" },
 ]
 [package.metadata.generate-rpm.requires]
-webkit2gtk4.1 = "*"
+"webkit2gtk4.1" = "*"
 gtk3 = "*"
 xdg-desktop-portal = "*"

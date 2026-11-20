@@ -59,10 +59,11 @@ if [[ -n "${TOOL}" && -x "${TOOL}" ]]; then
   chmod +x "${OUT_FILE}"
   echo "Built AppImage: ${OUT_FILE}"
 else
-  echo "appimagetool not found; creating portable tarball instead."
-  TAR_FILE="${OUT_DIR}/GeminiDesk-${VERSION}-Linux-${ARCH}.tar.gz"
-  tar -czf "${TAR_FILE}" -C "${APPDIR}/usr/bin" gemini-desk -C "${REPO_ROOT}" README.md THIRD_PARTY_LICENSES.md
-  echo "Built tarball: ${TAR_FILE}"
+  echo "appimagetool not found; skipping AppImage build."
 fi
+
+TAR_FILE="${OUT_DIR}/GeminiDesk-${VERSION}-Linux-${ARCH}.tar.gz"
+tar -czf "${TAR_FILE}" -C "${APPDIR}/usr/bin" gemini-desk -C "${REPO_ROOT}" README.md THIRD_PARTY_LICENSES.md
+echo "Built tarball: ${TAR_FILE}"
 
 rm -rf "${APPDIR}"

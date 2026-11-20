@@ -146,7 +146,7 @@ jobs:
         env:
           UPDATER_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_SIGNING_PRIVATE_KEY }}
         run: |
-          python3 -m pip install --quiet cryptography
+          python3 -m pip install --quiet --break-system-packages cryptography || sudo apt-get install -y --no-install-recommends python3-cryptography
           python3 scripts/release_manifest.py \
             --version "${{ needs.resolve-version.outputs.version }}" \
             --base-url "https://github.com/${{ github.repository }}/releases/download/${{ needs.resolve-version.outputs.tag }}" \
@@ -158,7 +158,6 @@ jobs:
               collected/latest.json.sig \
               "${GEMINIDESK_UPDATER_PUBKEY}"
           fi
-          sha256sum -c <(cd collected && sha256sum --ignore-missing -c SHA256SUMS.txt >/dev/null && true) || true
           (cd collected && sha256sum -c SHA256SUMS.txt)
           ls -lh collected/
       - name: Upload consolidated verified release bundle
