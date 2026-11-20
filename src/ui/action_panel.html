@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GeminiDesk</title>
+<style>
+  :root {
+    --bg: #0B0B0C;
+    --surface: #151516;
+    --elevated: #1C1C1E;
+    --elevated-hover: #242427;
+    --border: #29292B;
+    --border-subtle: #1F1F22;
+    --text: #F5F5F7;
+    --text-secondary: #98989F;
+    --text-tertiary: #65656B;
+    --primary: #F5F5F7;
+    --primary-fg: #0B0B0C;
+    --warn: #FF9F0A;
+  }
+
+  [data-theme="light"] {
+    --bg: #FFFFFF;
+    --surface: #F5F5F7;
+    --elevated: #F2F2F5;
+    --elevated-hover: #E7E7EC;
+    --border: #E2E2E7;
+    --border-subtle: #ECECF0;
+    --text: #1D1D1F;
+    --text-secondary: #6E6E73;
+    --text-tertiary: #8E8E93;
+    --primary: #1D1D1F;
+    --primary-fg: #FFFFFF;
+    --warn: #B25000;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+
+  .wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 18px 20px 16px;
+    gap: 12px;
+  }
+
+  .header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .header h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  .source-pill {
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .notice {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 8px 11px;
+    border-radius: 7px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .notice.warn {
+    color: var(--warn);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .chip {
+    border: 1px solid var(--border);
+    background: var(--elevated);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+  }
+
+  .chip:hover {
+    background: var(--elevated-hover);
+    color: var(--text);
+  }
+
+  .chip.active {
+    background: var(--primary);
+    color: var(--primary-fg);
+    border-color: transparent;
+  }
+
+  .preview-frame {
+    flex: 1;
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    overflow: hidden;
+  }
+
+  .preview-frame img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+  }
+
+  label.field-label {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    display: block;
+    margin-bottom: 5px;
+  }
+
+  textarea {
+    width: 100%;
+    flex: 1;
+    min-height: 120px;
+    resize: none;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    outline: none;
+  }
+
+  textarea:focus {
+    border-color: var(--text-secondary);
+  }
+
+  .compact-textarea {
+    flex: 0 0 68px;
+    min-height: 68px;
+  }
+
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .hint {
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn {
+    border: 1px solid var(--border);
+    background: var(--elevated);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s ease;
+  }
+
+  .btn:hover { background: var(--elevated-hover); }
+
+  .btn-primary {
+    background: var(--primary);
+    color: var(--primary-fg);
+    border-color: transparent;
+  }
+
+  .btn-primary:hover {
+    opacity: 0.9;
+    background: var(--primary);
+  }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1 id="title">Ask Gemini</h1>
+      <span class="source-pill" id="badge">Ready</span>
+    </div>
+
+    <div class="notice" id="notice" hidden></div>
+
+    <!-- Action chips (used in Clipboard Actions and Selection modes) -->
+    <div class="chips" id="chips" hidden></div>
+
+    <!-- Screenshot Preview (used in Screenshot mode) -->
+    <div class="preview-frame" id="preview-frame" hidden>
+      <img id="preview-img" alt="Captured screen region" />
+    </div>
+
+    <!-- Editable prompt review area -->
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0;" id="editor-wrap">
+      <label class="field-label" id="editor-label" for="prompt-input">Review prompt before inserting into Gemini</label>
+      <textarea id="prompt-input" placeholder="Write or paste your prompt..."></textarea>
+    </div>
+
+    <div class="footer">
+      <span class="hint" id="footer-hint">Ctrl+Enter to insert · Esc to cancel (never auto-submits)</span>
+      <div class="actions">
+        <button class="btn" id="btn-cancel">Cancel</button>
+        <button class="btn" id="btn-retake" hidden>Retake</button>
+        <button class="btn" id="btn-copy">Copy</button>
+        <button class="btn btn-primary" id="btn-confirm">Insert into Gemini</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let mode = 'selection';
+  let rawCapturedText = '';
+  let templates = [];
+
+  function post(payload) {
+    window.ipc.postMessage(JSON.stringify(payload));
+  }
+
+  function applyTemplate(tpl, text) {
+    if (tpl.includes('{{text}}')) return tpl.replaceAll('{{text}}', text);
+    return text ? `${tpl}\n\n${text}` : tpl;
+  }
+
+  function renderChips(list, autoSelectFirst) {
+    const host = $('chips');
+    host.innerHTML = '';
+    if (!list || list.length === 0) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    list.forEach((item, idx) => {
+      const btn = document.createElement('button');
+      btn.className = 'chip';
+      btn.textContent = item.label;
+      btn.addEventListener('click', () => {
+        host.querySelectorAll('.chip').forEach((c) => c.classList.remove('active'));
+        btn.classList.add('active');
+        $('prompt-input').value = applyTemplate(item.prompt, rawCapturedText);
+        $('prompt-input').focus();
+      });
+      host.appendChild(btn);
+      if (autoSelectFirst && idx === 0) {
+        btn.classList.add('active');
+        $('prompt-input').value = applyTemplate(item.prompt, rawCapturedText);
+      }
+    });
+  }
+
+  window.__geminidesk_init_action = function(payload) {
+    document.documentElement.setAttribute('data-theme', payload.effective_dark ? 'dark' : 'light');
+    mode = payload.mode;
+    rawCapturedText = payload.captured_text || '';
+    templates = payload.templates || [];
+
+    $('notice').hidden = !payload.notice;
+    if (payload.notice) {
+      $('notice').textContent = payload.notice;
+      $('notice').className = payload.notice_warn ? 'notice warn' : 'notice';
+    }
+
+    if (mode === 'screenshot') {
+      $('title').textContent = 'Screenshot to Gemini';
+      $('badge').textContent = `${payload.image_width} × ${payload.image_height} px`;
+      $('chips').hidden = true;
+      $('preview-frame').hidden = false;
+      $('preview-img').src = `data:image/png;base64,${payload.image_base64}`;
+      $('editor-wrap').style.flex = '0 0 auto';
+      $('editor-label').textContent = 'Optional instruction';
+      $('prompt-input').className = 'compact-textarea';
+      $('prompt-input').placeholder = 'Add an optional question about this screenshot...';
+      $('prompt-input').value = '';
+      $('btn-retake').hidden = false;
+      $('btn-copy').textContent = 'Copy Image';
+      $('btn-confirm').textContent = 'Attach to Gemini';
+      $('footer-hint').textContent = 'Ctrl+Enter to attach · Esc to cancel';
+    } else if (mode === 'clipboard') {
+      $('title').textContent = 'Clipboard Actions';
+      $('badge').textContent = payload.badge || 'Clipboard';
+      $('preview-frame').hidden = true;
+      $('editor-wrap').style.flex = '1';
+      $('editor-label').textContent = 'Prepared prompt (editable before sending)';
+      $('prompt-input').className = '';
+      $('btn-retake').hidden = true;
+      $('btn-copy').textContent = 'Copy';
+      $('btn-confirm').textContent = 'Insert into Gemini';
+      renderChips(templates, !!rawCapturedText);
+      if (!rawCapturedText) $('prompt-input').value = '';
+    } else {
+      $('title').textContent = 'Ask Gemini with Selection';
+      $('badge').textContent = payload.badge || 'Selection';
+      $('preview-frame').hidden = true;
+      $('editor-wrap').style.flex = '1';
+      $('editor-label').textContent = 'Review context and add your question';
+      $('prompt-input').className = '';
+      $('btn-retake').hidden = true;
+      $('btn-copy').textContent = 'Copy';
+      $('btn-confirm').textContent = 'Insert into Gemini';
+      const quickTemplates = [
+        { label: 'Raw text', prompt: '{{text}}' },
+        ...templates.slice(0, 5),
+      ];
+      renderChips(quickTemplates, false);
+      $('prompt-input').value = rawCapturedText;
+    }
+
+    $('prompt-input').focus();
+  };
+
+  function submitPrimary() {
+    if (mode === 'screenshot') {
+      post({ type: 'confirm_screenshot', prompt: $('prompt-input').value.trim() });
+    } else {
+      const text = $('prompt-input').value.trim();
+      if (!text) return;
+      post({ type: 'confirm_text', prompt: text });
+    }
+  }
+
+  $('btn-confirm').addEventListener('click', submitPrimary);
+  $('btn-cancel').addEventListener('click', () => post({ type: 'cancel' }));
+  $('btn-retake').addEventListener('click', () => post({ type: 'retake_screenshot' }));
+  $('btn-copy').addEventListener('click', () => {
+    if (mode === 'screenshot') {
+      post({ type: 'copy_screenshot' });
+    } else {
+      post({ type: 'copy_text', prompt: $('prompt-input').value });
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      post({ type: 'cancel' });
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      submitPrimary();
+    }
+  });
+
+  post({ type: 'ready' });
+</script>
+</body>
+</html>
