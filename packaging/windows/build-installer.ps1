@@ -1,6 +1,6 @@
 # Builds GeminiDesk Windows release packages (Portable ZIP + NSIS Per-User Installer)
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.0.1",
     [string]$BinaryPath = "",
     [string]$MakeNsisPath = "",
     [string]$OutDir = "",

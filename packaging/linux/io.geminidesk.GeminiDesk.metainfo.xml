@@ -25,6 +25,11 @@
   </developer>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.0.1" date="2026-11-20">
+      <description>
+        <p>Fixes Linux WebKitGTK UI stuttering by restoring GPU-accelerated compositing via WEBKIT_DMABUF_RENDERER_FORCE_SHM=1 on WebKitGTK 2.44+ (increasing live Gemini frame rates from 13–20 FPS to 87–111 FPS while preserving multi-window reparenting), preserves decoded WebKit memory caches across transient Balanced-mode hides, and eliminates redundant GTK visibility redraws.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-11-20">
       <description>
         <p>First public stable release featuring native Google account-switching navigation (Back to Gemini and Cancel), full KDE Plasma 6 Wayland integration (XDG GlobalShortcuts, Screenshot, Settings, Klipper clipboard, and native desktop notifications), WebKitGTK background memory trimming, and Ed25519-verified automatic updates.</p>

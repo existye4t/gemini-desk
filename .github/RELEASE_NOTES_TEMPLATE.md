@@ -1,20 +1,20 @@
-# GeminiDesk v1.0.0
+# GeminiDesk v1.0.1
 
 > GeminiDesk is an independent open-source desktop client for Google Gemini. It is not developed by, affiliated with, endorsed by, or sponsored by Google LLC.
 
 ## Highlights
 
-- **Account Switching & Navigation UX:** Added a compact native navigation header (`Back to Gemini`, flow title, and `Cancel` / `Retry`) while Google sign-in, Account Chooser, or Google Account pages are active, with `Alt+Left` history back and non-interfering `Escape` cancellation. Returning preserves your previous Gemini conversation URL without clearing cookies or storage, and honestly re-verifies the active Google session afterward.
-- **Linux (CachyOS / Arch · KDE Plasma 6 · Wayland) — Real-Hardware Verified:**
-  - Verified Google sign-in, conversation loading, full-restart session persistence, and account switching on real CachyOS KDE Plasma 6 Wayland hardware (`WebKitGTK 4.1`).
-  - Asynchronous XDG `GlobalShortcuts` portal lifecycle with duplicate-conflict detection, permission denial handling, and clean `Session::Close` teardown.
-  - Native D-Bus desktop notifications (`org.freedesktop.Notifications` with `notify-send` fallback, respecting OS Do Not Disturb and never exposing chat contents).
-  - Single-WebView reparenting across Main Window, Quick Chat, and Floating Companion, `ksni` StatusNotifierItem tray, native KDE Klipper D-Bus + GTK3 clipboard, multi-monitor GDK workarea detection, and `/proc` live telemetry.
-- **Efficiency & Resource Lifecycle:**
-  - Real Linux WebKitGTK background visibility hiding (`wk.hide()`), `CacheModel::DocumentViewer` in Efficiency mode, transient `MEMORY_CACHE` trimming, glibc `malloc_trim(0)` reclamation, and a single reusable condvar timer for idle suspension checks.
-  - Measured `0.000%` settled background tray CPU (Host and Full Process Tree) in Balanced and Efficiency modes on CachyOS Linux.
-- **Windows 11 — Preserved & CI-Verified:** Per-user Unicode NSIS installer (`GeminiDesk-1.0.0-Windows-x64-Setup.exe`) and Portable ZIP (`GeminiDesk-1.0.0-Windows-x64-Portable.zip`), preserving WebView2 profiles, settings, and `/S /AUTORESTART` signed updates.
-- **macOS (Apple Silicon & Intel) — Experimental / Unsigned:** Native `WKWebView` builds and `.dmg` packages (`GeminiDesk-1.0.0-macOS-AppleSilicon.dmg`, `GeminiDesk-1.0.0-macOS-Intel.dmg`) compiled and packaged on `macos-15` CI. Not yet runtime-tested on physical macOS hardware and **not Apple Developer ID signed or notarized**.
+- **Linux UI Smoothness & Frame Pacing Fix (CachyOS / KDE Plasma 6 / Wayland Verified):**
+  - **Root cause fixed:** In `v1.0.0`, `WEBKIT_DISABLE_DMABUF_RENDERER=1` disabled WebKitGTK's accelerated compositing pipeline entirely, causing live `gemini.google.com/app` rendering to drop to **13–20 FPS** (36–78 ms median frame times).
+  - On WebKitGTK ≥ 2.44, GeminiDesk now uses `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` automatically (falling back to `WEBKIT_DISABLE_DMABUF_RENDERER=1` only on WebKitGTK < 2.44 or when `GEMINIDESK_SOFTWARE_RENDER=1` is set, and never overriding user-specified `WEBKIT_*` variables).
+  - **Measured improvement on real CachyOS + KDE Plasma 6 Wayland + AMD Radeon RX 6600 XT (`239.76 Hz`, `webkit2gtk-4.1 2.54.3`):**
+    - Typing: **`19.9 FPS → 87.0 FPS`** (input-to-paint latency **`36 ms → 15 ms`** P50, **`87 ms → 25 ms`** P95)
+    - Scrolling: **`16.7 FPS → 110.6 FPS`** (frames > 16.7 ms: **`100% → 1.4%`**)
+    - Sidebar transitions: **`13.3 FPS → 105.2 FPS`** (frames > 16.7 ms: **`100% → 0.9%`**)
+    - Multi-window reparenting (`Main ↔ Quick Chat ↔ Floating Companion`): **`1–2 ms`** with zero black/blank surfaces, and background tray CPU remains **`0.03%–0.67%`**.
+  - Preserves WebKit's decoded `MEMORY_CACHE` across transient Balanced-mode hides / Quick Chat toggles (reserving `MEMORY_CACHE` trimming for delayed Efficiency idle suspension) and skips redundant GTK `show()`/`hide()` redraws.
+- **Windows 11 — Preserved & CI-Verified:** Per-user Unicode NSIS installer (`GeminiDesk-1.0.1-Windows-x64-Setup.exe`) and Portable ZIP (`GeminiDesk-1.0.1-Windows-x64-Portable.zip`), preserving WebView2 profiles, settings, and `/S /AUTORESTART` signed updates.
+- **macOS (Apple Silicon & Intel) — Experimental / Unsigned:** Native `WKWebView` builds and `.dmg` packages (`GeminiDesk-1.0.1-macOS-AppleSilicon.dmg`, `GeminiDesk-1.0.1-macOS-Intel.dmg`) compiled and packaged on `macos-15` CI. Not yet runtime-tested on physical macOS hardware and **not Apple Developer ID signed or notarized**.
 - **Cryptographically Signed Automatic Updates:** Detached Ed25519 signatures (`latest.json` + `latest.json.sig`), SemVer anti-downgrade protection, HTTPS native-TLS downloads, streaming SHA-256 verification, and pre-install TOCTOU re-verification.
 
 ## Downloads & Verification
@@ -34,5 +34,5 @@ python3 scripts/release_manifest.py --verify latest.json latest.json.sig ce042ef
 ## Platform Notes
 
 - **Windows 11:** Requires Microsoft Edge WebView2 Runtime (pre-installed on Windows 11).
-- **Linux:** Requires system `webkit2gtk-4.1`, `gtk3`, `openssl`, and `xdg-desktop-portal` (plus `xdg-desktop-portal-kde` on KDE Plasma).
+- **Linux:** Requires system `webkit2gtk-4.1`, `gtk3`, `openssl`, and `xdg-desktop-portal` (plus `xdg-desktop-portal-kde` on KDE Plasma). Users upgrading from `v1.0.0` AppImage can use **Settings → About → Check for Updates** to download and verify `v1.0.1` automatically.
 - **macOS (Experimental):** Unsigned / unnotarized CI `.dmg` bundles. macOS Gatekeeper will warn on first launch; macOS runtime behavior and `WKWebView` Google authentication have not yet been verified on real Mac hardware.

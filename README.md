@@ -91,27 +91,37 @@ All OS capture workflows are **opt-in** (disabled by default in **Settings → P
 
 GeminiDesk separates **Rust Host** memory (the native shell) from **Full Process-Tree** memory (Rust host plus the embedded OS WebView renderer and network/GPU helpers). Because Google's Gemini web application is a full single-page web app, **Full Process-Tree Private Memory** is the honest headline figure — the Rust host itself is only a small fraction of total RAM.
 
-### Linux Measurements — CachyOS (`v1.0.0`, Real Hardware)
+### Linux Measurements — CachyOS (`v1.0.1`, Real Hardware)
 
-- **System:** CachyOS Linux (`Linux 7.3.4-1-cachyos x86_64`), 6 logical cores, AMD Radeon RX 6600, KDE Plasma 6, Wayland
-- **Renderer:** `webkit2gtk-4.1` (`2.54.3-1`), `gtk3` (`3.24.52`)
-- **Executable / Package Size:** `5.33 MB` release binary · `~2.5 MB` Arch `.pkg.tar.zst`
-- **Methodology:** Isolated clean XDG profile (`/proc/<pid>/smaps_rollup` `Private_Clean + Private_Dirty` and `Rss`; 6-second settled CPU intervals across all logical cores)
+- **System:** CachyOS Linux (`Linux 7.3.4-1-cachyos x86_64`), 6 logical cores, AMD Radeon RX 6600 XT (`Mesa 26.3.1`), `1920×1080 @ 239.76 Hz` display, KDE Plasma 6, Wayland
+- **Renderer:** `webkit2gtk-4.1` (`2.54.3-1`), `gtk3` (`3.24.52`), `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` (accelerated compositing + SHM multi-window transport)
+- **Executable / Package Size:** `5.33 MB` release binary · `~2.6 MB` Arch `.pkg.tar.zst`
+- **Methodology:** Isolated clean XDG profile (`/proc/<pid>/smaps_rollup` `Private_Clean + Private_Dirty` and `Rss`; 6-second settled CPU intervals across all logical cores; live `gemini.google.com/app` `requestAnimationFrame` frame pacing & input-to-paint timing)
 
-| State (`v1.0.0`, Warm Profile) | Processes | Rust Host Private | Full Tree Private | Full Tree RSS | Settled CPU (Host / Total) |
+#### Live `gemini.google.com/app` Rendering Smoothness (`v1.0.0` → `v1.0.1`)
+
+| Workload (Live `gemini.google.com/app`) | `v1.0.0` (`WEBKIT_DISABLE_DMABUF_RENDERER=1`) | `v1.0.1` (`WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`) | Improvement |
+| --- | --- | --- | --- |
+| **Typing in prompt** | `19.9 FPS` (`p50: 37 ms`, `p95: 87 ms`, `100%` > 16.7 ms) | **`87.0 FPS`** (`p50: 10 ms`, `p95: 18 ms`, `5.5%` > 16.7 ms) | **4.4× FPS** |
+| **Input-to-paint latency** | `36 ms` P50 · `87 ms` P95 | **`15 ms` P50 · `25 ms` P95** | **2.4×–3.5× lower** |
+| **Scrolling** | `16.7 FPS` (`p50: 74 ms`, `p95: 77 ms`, `100%` > 16.7 ms) | **`110.6 FPS`** (`p50: 8 ms`, `p95: 10 ms`, `1.4%` > 16.7 ms) | **6.6× FPS** |
+| **Sidebar transitions** | `13.3 FPS` (`p50: 76 ms`, `p95: 77 ms`, `100%` > 16.7 ms) | **`105.2 FPS`** (`p50: 9 ms`, `p95: 13 ms`, `0.9%` > 16.7 ms) | **7.9× FPS** |
+
+#### Process-Tree Memory & Idle CPU (`v1.0.1`, Warm Profile)
+
+| State (`v1.0.1`, Warm Profile) | Processes | Rust Host Private | Full Tree Private | Full Tree RSS | Settled CPU (Host / Total) |
 | --- | --- | --- | --- | --- | --- |
-| **Main Window (Visible, Balanced)** | 3 core* | 51.0 MB | 513.8 MB | 782.1 MB | 1.08% / 17.44%** |
-| **Quick Chat (Visible, Balanced)** | 3 core* | 49.3 MB | 506.9 MB | 762.4 MB | 0.25% / 2.25% |
-| **Background Tray — Balanced** | 3 | 47.5 MB | 535.4 MB | 765.5 MB | **0.00% / 0.00%** |
-| **Background Tray — Efficiency** | 3 | 49.4 MB | 552.5 MB | 782.5 MB | **0.00% / 0.00%** |
-| **Background Tray — Performance** | 3 | 49.8 MB | 534.1 MB | 763.5 MB | 0.00% / 0.11% |
-| **Settings Open (Temporary 2nd Renderer)** | 4 | 55.3 MB | 548.4 MB | 943.7 MB | — |
+| **Main Window (Visible, Balanced)** | 3 core* | 50.7 MB | 796.3 MB | 1,105.7 MB | 5.69% / 21.28%** |
+| **Quick Chat (Visible, Balanced)** | 3 core* | 47.5 MB | 810.3 MB | 1,111.5 MB | 4.63% / 23.71%** |
+| **Background Tray — Balanced** | 3 | 46.8 MB | 816.6 MB | 1,095.9 MB | **0.00% / 0.44%** |
+| **Background Tray — Efficiency** | 3 | 49.1 MB | 836.1 MB | 1,119.3 MB | **0.03% / 0.06%** |
+| **Background Tray — Performance** | 3 | 46.8 MB | 812.3 MB | 1,092.0 MB | **0.03% / 0.67%** |
+| **Settings Open (Temporary 2nd Renderer)** | 4 | 50.7 MB | 1,259.3 MB | 1,761.4 MB | — |
 
-- **Startup & Reparenting (`v1.0.0`, Cold / Warm):** Native windows ready `127 / 136 ms` · WebKitGTK init `183 / 197 ms` · First navigation `287 / 301 ms` · First Gemini title `734 / 770 ms` · Page interactive `3.74 / 3.14 s` · Single-WebView reparent (Main ↔ Quick Chat ↔ Companion) **`1–2 ms`**.
-- **Optimization Result (`v0.4.0` → `v1.0.0` on Linux):** Enabling explicit WebKitGTK widget hiding (`wk.hide()`), `CacheModel::DocumentViewer` in Efficiency mode, transient `MEMORY_CACHE` trimming, glibc `malloc_trim(0)`, and a single condvar idle timer reduced settled Linux background tray CPU from **`0.28%–0.72%`** down to **`0.000%`** in Balanced and Efficiency modes and reclaimed ~25–40 MB after window switching.
-- **Honest Baseline Note:** The ~415–465 MB `WebKitWebProcess` private memory footprint is inherent to Google's live Gemini web application heap inside WebKitGTK. Unlike WebView2's `TrySuspend`, WebKitGTK 4.1 does not provide a non-destructive renderer page-out API that keeps the live conversation DOM intact without terminating and reloading the process.
+- **Startup & Reparenting (`v1.0.1`, CachyOS):** Native windows ready `~161 ms` · WebKitGTK init `~231 ms` · First navigation `~446 ms` · Single-WebView reparent (Main ↔ Quick Chat ↔ Companion) **`1–2 ms`** with zero black/blank surfaces.
+- **Honest Resource Trade-off Note:** Restoring GPU-accelerated WebKitGTK compositing adds ~270 MB of Mesa/Skia GPU shader & surface memory inside `WebKitWebProcess` compared to `v1.0.0`'s software fallback (`~514 MB` → `~796 MB`, comparable to WebView2's historical `645–785 MB` on Windows 11), while improving live Gemini UI frame rates by **4.4×–7.9×** and keeping background tray CPU near `0%`. Users on very low-RAM systems or troubleshooting GPU drivers can still force software rendering with `GEMINIDESK_SOFTWARE_RENDER=1`.
 - *\*During the first ~15s after startup, GTK's `gdk-pixbuf` glycin icon loader briefly spawns transient helper processes before exiting to the steady-state 3-process tree (`Rust Host` + `WebKitWebProcess` + `WebKitNetworkProcess`).*
-- *\*\*Measured on the signed-out Gemini landing page while `WEBKIT_DISABLE_DMABUF_RENDERER=1` is active for Wayland multi-toplevel reparenting compatibility; hidden tray CPU drops to `0.000%`.*
+- *\*\*Measured on the signed-out Gemini landing page while its continuous hero animation is actively rendering at ~100 FPS; hidden tray CPU drops to `0.06%–0.67%`.*
 
 ### Historical Windows 11 Measurements (Reference Only)
 
@@ -133,8 +143,8 @@ Download prebuilt packages from the [GitHub Releases](https://github.com/existye
 
 ### Windows 11 (x64)
 
-- **Recommended:** Download and run `GeminiDesk-1.0.0-Windows-x64-Setup.exe` (per-user install to `%LOCALAPPDATA%\Programs\GeminiDesk`, no administrator elevation required; upgrades preserve settings and Google sign-in).
-- **Portable:** Extract `GeminiDesk-1.0.0-Windows-x64-Portable.zip` and run `gemini-desk.exe`.
+- **Recommended:** Download and run `GeminiDesk-1.0.1-Windows-x64-Setup.exe` (per-user install to `%LOCALAPPDATA%\Programs\GeminiDesk`, no administrator elevation required; upgrades preserve settings and Google sign-in).
+- **Portable:** Extract `GeminiDesk-1.0.1-Windows-x64-Portable.zip` and run `gemini-desk.exe`.
 
 ### Linux — Arch Linux / CachyOS (Fish shell)
 
@@ -150,25 +160,25 @@ makepkg -si
 ### Linux — Debian / Ubuntu
 
 ```bash
-sudo apt install ./GeminiDesk-1.0.0-Linux-x86_64.deb
+sudo apt install ./GeminiDesk-1.0.1-Linux-x86_64.deb
 ```
 
 ### Linux — Fedora / RPM-based
 
 ```bash
-sudo dnf install ./GeminiDesk-1.0.0-Linux-x86_64.rpm
+sudo dnf install ./GeminiDesk-1.0.1-Linux-x86_64.rpm
 ```
 
 ### Linux — AppImage & Portable Tarball
 
 ```bash
-chmod +x GeminiDesk-1.0.0-Linux-x86_64.AppImage
-./GeminiDesk-1.0.0-Linux-x86_64.AppImage
+chmod +x GeminiDesk-1.0.1-Linux-x86_64.AppImage
+./GeminiDesk-1.0.1-Linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon & Intel — Experimental / Unsigned)
 
-Download `GeminiDesk-1.0.0-macOS-AppleSilicon.dmg` (M1–M4) or `GeminiDesk-1.0.0-macOS-Intel.dmg` (x86_64) and drag **GeminiDesk** to `/Applications`.
+Download `GeminiDesk-1.0.1-macOS-AppleSilicon.dmg` (M1–M4) or `GeminiDesk-1.0.1-macOS-Intel.dmg` (x86_64) and drag **GeminiDesk** to `/Applications`.
 
 > Because macOS releases are currently **unsigned and unnotarized**, Gatekeeper will display a warning on first launch and macOS runtime behavior has not yet been verified on physical Mac hardware.
 

@@ -130,7 +130,7 @@ def main() -> None:
         metavar=("MANIFEST", "SIG", "PUBKEY_HEX"),
         help="Verify manifest signature against hex Ed25519 public key",
     )
-    parser.add_argument("--version", default="1.0.0")
+    parser.add_argument("--version", default="1.0.1")
     parser.add_argument("--base-url", default="")
     parser.add_argument("--dist-dir", default="dist")
     parser.add_argument("--notes-file", default="")

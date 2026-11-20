@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Sema
 
 ---
 
+## [1.0.1] — 2026-11-20 (Linux UI Smoothness & WebKitGTK Acceleration Fix)
+
+### Fixed
+- **Linux WebKitGTK UI Stuttering & Frame Pacing (`src/main.rs`, `src/webview.rs`):**
+  - Replaced the unconditional `WEBKIT_DISABLE_DMABUF_RENDERER=1` startup workaround with runtime version-aware `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` on WebKitGTK ≥ 2.44 (retaining `WEBKIT_DISABLE_DMABUF_RENDERER=1` only as a fallback for WebKitGTK < 2.44 or explicit `GEMINIDESK_SOFTWARE_RENDER=1`, while always respecting explicit user environment overrides).
+  - **Root cause resolved:** In WebKitGTK 2.44–2.54, `WEBKIT_DISABLE_DMABUF_RENDERER=1` completely disabled accelerated compositing (equivalent to `HardwareAccelerationPolicy::Never`), dropping live `gemini.google.com/app` rendering to **13–20 FPS (36–78 ms median frame times, 100% dropped 60 Hz frames)**. Switching to `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` restores GPU-accelerated compositing, threaded Skia rasterization, and async overflow scrolling while preserving seamless zero-blank single-WebView reparenting across Main Window, Quick Chat, and Floating Companion on Wayland.
+  - Measured on real CachyOS + KDE Plasma 6 Wayland + AMD Radeon RX 6600 XT (`239.76 Hz` display, `webkit2gtk-4.1 2.54.3`): typing improved from **`19.9 → 87.0 FPS`** (input-to-paint latency **`36 ms → 15 ms`** median, **`87 ms → 25 ms`** P95), scrolling from **`16.7 → 110.6 FPS`** (`100% → 1.4%` frames > 16.7 ms), and sidebar transitions from **`13.3 → 105.2 FPS`** (`100% → 0.9%` frames > 16.7 ms).
+- **Foreground Restore & Reparent Smoothness (`src/webview.rs`):**
+  - Stopped evicting WebKitGTK's decoded `MEMORY_CACHE` on every transient Balanced-mode hide / Quick Chat toggle (eliminating asset re-decode hitches on reopen; `MEMORY_CACHE` trimming is now strictly reserved for delayed Efficiency-mode idle suspension while Balanced mode trims host glibc arenas and hides the GTK widget to keep background tray CPU near `0%`).
+  - Explicitly enabled `enable_webgl(true)` and `enable_page_cache(true)` on Linux WebKitGTK, guarded `set_visible()` against redundant GTK widget `show()`/`hide()` calls, and queued an immediate resize/draw after reparenting or resuming from Efficiency idle.
+  - Added startup diagnostics logging the active WebKitGTK version, `HardwareAccelerationPolicy`, `PerformanceMode`, and DMABuf/SHM renderer selection.
+
+### Tests
+- Added unit tests for `select_linux_webkit_renderer_env` covering WebKitGTK ≥ 2.44 (`FORCE_SHM`), legacy < 2.44 fallback, `GEMINIDESK_SOFTWARE_RENDER` escape hatch, and preservation of explicit user environment overrides (49 unit tests passing).
+
+---
+
 ## [1.0.0] — 2026-11-20 (First Public Stable Release)
 
 ### Added
