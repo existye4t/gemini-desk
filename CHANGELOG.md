@@ -5,6 +5,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Sema
 
 ---
 
+## [1.0.0] — 2026-11-20 (First Public Stable Release)
+
+### Added
+- **In-App Account Switching Navigation & Cancellation (`src/auth.rs`, `src/platform/*`, `src/webview.rs`, `src/ui/settings.html`):**
+  - Compact native navigation header (`Back to Gemini`, active flow title, and `Cancel` / `Retry`) mounted at the top of the Main Window strictly while Google sign-in, Account Chooser, or Google Account pages are active (GTK3 monochrome bar on Linux, native Win32 child bar on Windows, native Window menu & title sync on macOS — zero duplicate WebViews).
+  - Keyboard navigation: `Alt+Left` steps back in WebView history or returns cleanly to Gemini; `Escape` cancels only after a read-only DOM focus/dialog check confirms no Google input field or modal dialog is active.
+  - Preserves the exact previous Gemini conversation URL (using `history.back()` when 1 step deep to avoid unnecessary full reloads, or direct validated navigation when deeper in a multi-step flow) without ever clearing cookies, sessions, or browser storage.
+  - Honest post-return verification (`AuthState::Returning` followed by live DOM probe) so canceling never pretends to undo an already-completed Google account switch.
+  - Added **Add Account** and **Back to Gemini** controls in **Settings → Account** and switched **Switch Account** to open Google's `AccountChooser` directly.
+- **Native Desktop Notifications (`src/notifications.rs`, `src/config.rs`, Settings → General):**
+  - Native Linux D-Bus `org.freedesktop.Notifications` integration (with `notify-send` fallback) respecting OS Do Not Disturb settings and user opt-in (`notifications_enabled`).
+  - Notifies strictly on non-sensitive app events (verified updates available/ready, Wayland shortcut permission declined, capture errors) and never exposes private chat content, prompts, clipboard data, or account emails.
+- **Enhanced KDE Plasma 6 Wayland Integration (`src/platform/linux.rs`, `src/hotkeys.rs`):**
+  - Non-blocking background XDG `GlobalShortcuts` portal lifecycle with duplicate shortcut conflict detection, asynchronous `BindShortcuts` permission response monitoring, and clean `org.freedesktop.portal.Session::Close` teardown on exit.
+  - Multi-monitor cursor-aware GDK `Monitor::workarea()` detection excluding panels/docks.
+  - Added KDE desktop quick actions (`QuickChat`, `Companion`, `Settings`) to user-local `.desktop` launcher generation and removed "Unofficial" from autostart metadata.
+- **Linux WebKitGTK Performance & Memory Lifecycle (`src/webview.rs`, `src/app.rs`, `src/platform/linux.rs`):**
+  - Implemented real Linux `PerformanceMode` behavior: `CacheModel::DocumentViewer` in Efficiency mode, explicit `WebKitWebView::hide()` on tray hide for native WebKit visibility/timer throttling, transient `WebsiteDataTypes::MEMORY_CACHE` trimming (strictly preserving cookies, LocalStorage, IndexedDB, and live conversations), glibc `malloc_trim(0)` reclamation on tray hide and utility window teardown, and native `WebViewExt::is_playing_audio()` guard.
+  - Replaced per-hide sleeping threads with a single reusable condvar `IdleSuspendScheduler`.
+- **Updater Polish (`src/updater/mod.rs`):**
+  - Automatically marks verified downloaded Linux `.AppImage` updates executable (`0o755`) before opening the updates folder.
+  - Quietly skips offline background startup update errors while preserving full error reporting for manual **Check for Updates**.
+  - Added regression tests covering `min_supported_version`, interrupted/truncated download `.part` cleanup, and pre-install TOCTOU SHA-256 verification.
+
+### Changed
+- Promoted **Linux (CachyOS / Arch · KDE Plasma 6 · Wayland)** to real-hardware verified status following user-confirmed Google sign-in, conversation loading, full-restart session persistence, and account switching.
+- Updated `.github/workflows/release.yml` so stable semantic versions (`v1.0.0`) publish with `prerelease: false`, ensuring GitHub's `/releases/latest/download/latest.json` endpoint resolves automatically for the signed updater.
+
+---
+
 ## [0.4.0] — 2026-11-20 (First Public Beta Candidate)
 
 ### Added

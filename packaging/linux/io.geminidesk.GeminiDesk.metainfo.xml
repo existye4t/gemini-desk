@@ -25,9 +25,14 @@
   </developer>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.0.0" date="2026-11-20">
+      <description>
+        <p>First public stable release featuring native Google account-switching navigation (Back to Gemini and Cancel), full KDE Plasma 6 Wayland integration (XDG GlobalShortcuts, Screenshot, Settings, Klipper clipboard, and native desktop notifications), WebKitGTK background memory trimming, and Ed25519-verified automatic updates.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-11-20">
       <description>
-        <p>First cross-platform beta with Linux Wayland/KDE Plasma portal integration, macOS bundle infrastructure, native Windows installer, and Ed25519-verified automatic updates.</p>
+        <p>Cross-platform beta with Linux Wayland/KDE Plasma portal integration, macOS bundle infrastructure, native Windows installer, and Ed25519-verified automatic updates.</p>
       </description>
     </release>
   </releases>

@@ -15,4 +15,4 @@ The full SIL Open Font License 1.1 text is distributed in [`assets/fonts/OFL-Gei
 
 ## Rust Crate Dependencies
 
-GeminiDesk builds on open-source Rust crates including `tao`, `wry`, `tray-icon`, `muda`, `global-hotkey`, `windows`, `webview2-com`, `serde`, `serde_json`, `toml`, `png`, `directories`, `open`, `url`, and `tracing` (licensed under MIT / Apache-2.0).
+GeminiDesk builds on open-source Rust crates including `tao`, `wry`, `tray-icon`, `muda`, `global-hotkey`, `ed25519-dalek`, `sha2`, `semver`, `ureq`, `windows`, `webview2-com`, `gtk`, `webkit2gtk`, `zbus`, `objc2`, `objc2-app-kit`, `objc2-foundation`, `objc2-web-kit`, `serde`, `serde_json`, `toml`, `png`, `directories`, `open`, `url`, and `tracing` (licensed under MIT / Apache-2.0 / BSD-3-Clause).

@@ -1,285 +1,325 @@
-# GeminiDesk
-
-An unofficial, ultra-lightweight, high-performance desktop client for Google Gemini written in Rust.
-
-> **Unofficial Client Disclaimer:** GeminiDesk is an independent open-source desktop shell for [Google Gemini](https://gemini.google.com). It is **not** affiliated with, endorsed by, or sponsored by Google LLC. All Google accounts, authentication, subscriptions, AI models, and conversation history remain entirely managed by Google.
-
----
-
-## Philosophy
-
-**"Premium simplicity. Native speed. Genuine Gemini."**
-
-GeminiDesk wraps Google's official Gemini web application inside a thin native Rust desktop shell without Electron, Node.js, or bundled Chromium runtimes:
-
-- **Core Stack:** Rust (`tao` + `wry` + `tray-icon` + `muda` + `global-hotkey` + native OS APIs)
-- **Native OS WebViews:** Microsoft Edge **WebView2** (Windows), **WebKitGTK 4.1** (Linux), **WKWebView** (macOS)
-- **Single-WebView Reparenting:** Main Window, Smart Mini Chat (Quick Chat), and Floating Companion all share **one single live WebView renderer**, preserving active conversations, streaming responses, and Google sign-in across ~15–21 ms transitions with zero duplicate browser processes.
-- **Refined Local Design System:** Settings and all productivity dialogs share a quiet monochrome design system (`src/ui/design-system.css`) with locally bundled **Geist** & **Geist Mono** variable fonts (`SIL OFL 1.1`, full Latin + Turkish glyph coverage, zero external CDN calls) served over an isolated `geminidesk://` local protocol.
-- **Cryptographically Authenticated Updates:** Release metadata (`latest.json`) is verified via a detached **Ed25519** signature (`latest.json.sig`) and **SHA-256** artifact verification over HTTPS before any download or installer handoff.
+<div align="center">
+  <img src="assets/icons/geminidesk-128.png" alt="GeminiDesk Icon" width="72" height="72" />
+  <h1>GeminiDesk</h1>
+  <p>A lightweight native Rust desktop client for Google Gemini.</p>
+  <p>
+    Built directly on platform WebViews (WebView2, WebKitGTK 4.1, WKWebView) with a single shared renderer, native desktop integration, and zero Electron or bundled Chromium runtime.
+  </p>
+</div>
 
 ---
 
-## Platform Support Matrix
+## Overview
 
-GeminiDesk only labels a platform **Supported** after real-hardware verification of installation, rendering, Google sign-in, session persistence, and desktop integrations. Compilation alone does not prove authentication or runtime compatibility.
+GeminiDesk wraps the official [Google Gemini](https://gemini.google.com/app) web application in a native Rust desktop shell (`tao` + `wry`). Main Window, Quick Chat, and Floating Companion share **one live WebView renderer**, preserving active conversations, streaming responses, drafts, and authentication without spawning duplicate browser engines.
 
-| Platform | Target / WebView | Status | Packages | Verification Notes |
+- **Native shell, genuine Gemini:** Google manages all authentication, accounts, subscriptions, models, and chat history directly inside the OS WebView.
+- **Single-renderer windowing:** Reparents one WebView across Main Window, Quick Chat, and Floating Companion in ~1–2 ms on Linux (WebKitGTK) and ~16–20 ms on Windows (WebView2).
+- **Zero background polling:** Clipboard, selection, and screen capture run strictly on explicit user action; live performance telemetry samples only while viewing **Settings → Performance**.
+- **Cryptographically signed updates:** Release metadata (`latest.json`) is verified via detached Ed25519 signatures and streaming SHA-256 checks before any installer handoff.
+
+---
+
+## Platform Compatibility
+
+| Platform | Build Status | Runtime Status | Authentication Status | Packaging |
 | --- | --- | --- | --- | --- |
-| **Windows 11 (x64)** | `x86_64-pc-windows-msvc` · **WebView2** | **Verified (Supported)** | NSIS Per-User Installer (`1.19 MB`), Portable ZIP (`1.37 MB`) | Real-hardware verified: Google auth, session persistence, Quick Chat, Companion, tray, shortcuts, productivity, installer/upgrade/uninstall, and controlled benchmarks. |
-| **Linux — CachyOS / Arch (KDE Plasma · Wayland)** | `x86_64-unknown-linux-gnu` · **WebKitGTK 4.1** | **Beta** *(Desktop Verified · Interactive Auth Test Ready)* | Arch `PKGBUILD` (`2.49 MB` `.pkg.tar.zst`), `.deb`, `.rpm`, lean `AppImage` | Real-hardware verified on CachyOS (`Linux 7.3.4-1-cachyos`, KDE Plasma 6 Wayland, WebKitGTK `2.54.3`): single-WebView reparenting (`0–2 ms`), `780×580` Quick Chat, Companion, XDG Portals (`GlobalShortcuts`, interactive `Screenshot`, `Settings`), `ksni` tray, native KDE Klipper D-Bus + GTK3 clipboard, `/proc` telemetry, Unix-socket CLI wake, and `makepkg` package build. Interactive Google sign-in + restart persistence ready for user verification. |
-| **Linux — X11 / GNOME** | `x86_64-unknown-linux-gnu` · **WebKitGTK 4.1** | **Experimental** *(Real-Device Testing Pending)* | `.deb`, `.rpm`, lean `AppImage` | Implemented: X11 `global-hotkey`, GTK3 clipboard + `xclip`/`xsel`, XDG `Screenshot` & `Settings` portals. Real-device verification pending. |
-| **macOS — Apple Silicon & Intel** | `aarch64` / `x86_64-apple-darwin` · **WKWebView** | **Experimental** *(Real-Device Testing Pending)* | `.app` bundle, `.dmg` *(unsigned until Apple Developer secrets configured)* | Implemented: `WKWebView` reparenting, native App Menu Bar, Dock reopen, LaunchAgent startup, `NSPasteboard`, interactive `screencapture -i`, `ps` telemetry. Real-device WKWebView Google auth & Gatekeeper notarization pending. |
+| **Windows 11 (x64)** | Verified (GitHub Actions CI) | Previously user-tested on Windows 11 Pro | Previously user-verified (WebView2) | NSIS Setup Installer, Portable ZIP |
+| **Linux — CachyOS / Arch (KDE Plasma 6 · Wayland)** | Verified (Local & CI) | Verified on real hardware (`v1.0.0`) | Real user-verified (WebKitGTK 4.1) | Arch `PKGBUILD`, `.AppImage`, `.tar.gz` |
+| **Linux — Debian / Ubuntu / Fedora (Wayland & X11)** | Verified (Ubuntu 24.04 CI) | Not yet runtime-tested on real hardware | Not yet runtime-tested | `.deb`, `.rpm`, `.AppImage`, `.tar.gz` |
+| **macOS — Apple Silicon (`arm64`)** | Compiled & packaged (`macos-15` CI) | Untested on real hardware | Untested | Unsigned `.dmg` (experimental) |
+| **macOS — Intel (`x86_64`)** | Compiled & packaged (`macos-15` CI) | Untested on real hardware | Untested | Unsigned `.dmg` (experimental) |
+
+> macOS `.dmg` artifacts are compiled and verified via `hdiutil verify` in CI, but have **not** been tested on physical Mac hardware and are **not** Apple Developer ID signed or notarized.
 
 ---
 
-## Features (`v0.4.0`)
+## Screenshots
 
-### Desktop Shell & Settings
-- **Two-Column Settings (`Ctrl + ,` / `Cmd + ,` or Tray → Settings):** 9 sections (*General*, *Account*, *Appearance*, *Shortcuts*, *Quick Chat*, *Productivity*, *Performance*, *Privacy*, *About*) with monochrome Dark (`#0B0B0C`) and independently calibrated Light (`#FFFFFF`) themes, bundled Geist + Geist Mono typography, custom popover dropdowns, sliding segmented controls, click-to-record `<kbd>` shortcut recorders, inline confirmation dialogs, `prefers-reduced-motion` support, and zero idle RAM when closed.
-- **Google Account & Sign-In (`Settings → Account`, Tray → *Google Account & Sign-In...*, or `--account` / `--sign-in`):** Direct Google Account Chooser, Switch/Add Account, Sign Out, live session status, persistent WebView profile indicator, and an explicitly labeled *Open Gemini in Default Browser* fallback (without fake OAuth handoffs or browser cookie extraction).
-- **Persistent System Tray:** Event-driven (`0.000%` Rust idle CPU) native tray on Windows (Win32), Linux (`ksni` StatusNotifierItem over D-Bus — native KDE Plasma support with zero `libappindicator3` dependency), and macOS (Menu Bar + Status Item).
-- **Single-Instance Activation:** Secondary invocations with CLI flags (`--quick-chat`, `--companion`, `--settings`, `--clipboard-actions`, `--ask-selection`, `--screenshot`) wake the running instance instantaneously via Win32 messages (Windows) or Unix domain sockets (Linux/macOS).
+All interface surfaces share a monochrome Geist / Geist Mono design system served locally from memory over `geminidesk://` with zero external CDN requests.
 
-### Six Native Productivity Features
-1. **Ask Gemini with Selection** (`Alt + Shift + A`, opt-in):
-   - Windows: reads selected text via **Windows UI Automation (`IUIAutomation`)** (explicitly refusing `CurrentIsPassword` fields), with optional non-destructive clipboard snapshot/restore fallback.
-   - Linux: reads Wayland/X11 Primary Selection (`wl-paste --primary` / `xclip`) strictly on invocation.
-   - Opens an editable writing sheet with a single-row quick-intent rail (*Raw text*, *Explain*, *Summarize*, *Translate*, *Fix grammar*, *Improve writing*, *Explain code*) and `Ctrl + Enter` insertion (never auto-submits).
-2. **Screenshot to Gemini** (`Alt + Shift + S`, opt-in, or Tray → *Capture Screenshot*):
-   - Windows: native Win32 multi-monitor, mixed-DPI virtual-screen region selector with pure in-memory PNG encoding.
-   - Linux: **XDG Screenshot Portal** (`org.freedesktop.portal.Screenshot`, `interactive = true`) for explicit user-approved KDE Plasma / GNOME region capture, with `spectacle` / `grim`+`slurp` fallback.
-   - macOS: native interactive `/usr/sbin/screencapture -i -x -t png` honoring macOS Screen Recording permissions.
-   - Opens an image-first matte dotted gallery stage with `W × H · PNG · N KB` badge, optional instruction bar, *Attach to Gemini*, *Copy Image*, and *Retake*.
-3. **Smart Mini Chat (Quick Chat)** (`Alt + Space`):
-   - Borderless always-on-top Spotlight-style overlay on the active cursor monitor with size presets (`Compact` / `Standard` / `Spacious` / custom W×H) and placement options. `Esc` hides, `Ctrl + Shift + E` expands to the Full Window.
-4. **Floating Companion** (`Alt + Shift + G`):
-   - Resizable persistent side window (`490 × 700` default) sharing the single live WebView renderer, with **Always on Top** (`Ctrl + Shift + T`), window opacity (`55%–100%`), edge snapping, and persisted geometry.
-5. **Clipboard Actions** (`Alt + Shift + C`, opt-in):
-   - Raycast-style searchable two-pane command palette with `↑`/`↓` navigation, `Alt+1..9` instant selection, 7 built-in actions, and a custom prompt template editor in Settings → Productivity. Reads clipboard strictly on invocation; never stores history or logs contents.
-6. **Performance Mode & Live Per-Role Telemetry** (Settings → Performance):
-   - **Efficiency**, **Balanced**, and **Performance** resource profiles with taskbar-minimized throttling (`SW_MINIMIZE`) and safe Efficiency `TrySuspend` guards (checks in-flight navigation, `IsDocumentPlayingAudio`, and active Gemini streaming before suspending).
-   - On-demand per-subprocess memory breakdown (*Renderer*, *GPU Process*, *Browser*, *Utility / Net*, *Rust Host*) and rolling 10s averaged + instantaneous 2s CPU % — stops immediately when leaving the tab.
+| Settings — General (Dark) | Settings — General (Light) |
+| --- | --- |
+| ![GeminiDesk Settings General Dark](docs/screenshots/settings-general-dark.png) | ![GeminiDesk Settings General Light](docs/screenshots/settings-general-light.png) |
 
-### Secure Automatic Updates (`Settings → About`)
-- Verifies detached **Ed25519** signatures (`latest.json.sig`) against a compile-time pinned public key (`ce042ef3aa7286c10ae6fdd6a886cfee2bc7ec09cd24d1862ca878adc5b1b637`) before parsing update metadata.
-- Enforces HTTPS-only transfers (OS native TLS store + trusted GitHub Releases host allowlist), strict SemVer anti-downgrade protection, streaming `.part` downloads with exact byte-size + **SHA-256** verification, pre-install TOCTOU re-verification, and interrupted-download cleanup.
-- Never installs major updates without user consent; unsigned local builds fail closed cleanly.
+| Clipboard Actions Palette (Dark) | Ask Gemini with Selection (Dark) |
+| --- | --- |
+| ![GeminiDesk Clipboard Actions Dark](docs/screenshots/clipboard-actions-dark.png) | ![GeminiDesk Ask Selection Dark](docs/screenshots/ask-selection-dark.png) |
+
+| Live Process-Tree Telemetry | Settings — About & Signed Updates |
+| --- | --- |
+| ![GeminiDesk Settings Performance Dark](docs/screenshots/settings-performance-dark.png) | ![GeminiDesk Settings About Dark](docs/screenshots/settings-about-dark.png) |
+
+*(Screenshots captured from GeminiDesk's native UI windows without personal accounts or conversation data.)*
 
 ---
 
-## Visual Overview (`v0.4.0`)
+## Main Features
 
-| Settings — General (Dark) | Settings — Performance Telemetry (Dark) |
-| --- | --- |
-| ![Settings General Dark](docs/screenshots/settings-general-dark.png) | ![Settings Performance Dark](docs/screenshots/settings-performance-dark.png) |
+- **Main Window:** Full resizable Gemini workspace with persisted window geometry, maximized state, dark/light theme synchronization, and native window icons.
+- **Account Switching & Navigation Controls:** Native compact header bar (`Back to Gemini`, active flow title, `Cancel` / `Retry`) while signing in, switching accounts, or viewing Google Account settings — preserving your prior Gemini conversation without clearing cookies or reloading unnecessarily.
+- **System Tray:** Persistent native tray (`ksni` StatusNotifierItem on Linux, Win32 tray on Windows, NSStatusItem on macOS) with left-click toggle and right-click access to Open Gemini, Quick Chat, Floating Companion, New Chat, Screenshot, Clipboard Actions, Google Account & Sign-In, Settings, and Quit.
+- **Native Desktop Notifications:** Optional system notifications (`org.freedesktop.Notifications` with `notify-send` fallback on Linux) for verified updates and errors. Respects OS Do Not Disturb settings and never displays chat messages, prompts, clipboard contents, or account emails.
+- **Settings Window:** Lazy-created native settings dialog destroyed on close (`0 MB` idle RAM) covering General, Account, Appearance, Shortcuts, Quick Chat, Productivity, Performance, Privacy, and About.
 
-| Settings — About & Signed Updater (Dark) | Settings — About & Signed Updater (Light) |
-| --- | --- |
-| ![Settings About Dark](docs/screenshots/settings-about-dark.png) | ![Settings About Light](docs/screenshots/settings-about-light.png) |
+---
 
-| Clipboard Actions Command Palette (Dark) | Ask Gemini with Selection (Dark) |
-| --- | --- |
-| ![Clipboard Actions Dark](docs/screenshots/clipboard-actions-dark.png) | ![Ask Selection Dark](docs/screenshots/ask-selection-dark.png) |
+## Quick Chat
+
+Summon Gemini anywhere on the desktop with **`Alt + Space`** (configurable):
+
+- Borderless floating overlay positioned on the monitor containing your cursor.
+- Presets for **Compact** (`720 × 540`), **Standard** (`780 × 580`), **Spacious** (`900 × 640`), or custom logical dimensions.
+- Placement presets: Top Center, Screen Center, Top Right, or Bottom Right.
+- Shares the single live Gemini session — press **`Ctrl + Shift + E`** to expand directly into the Main Window without interrupting streaming responses, or **`Esc`** to dismiss.
+
+---
+
+## Productivity Tools
+
+All OS capture workflows are **opt-in** (disabled by default in **Settings → Productivity**), execute strictly on demand, never poll in the background, and never auto-submit prompts to Gemini:
+
+- **Floating Companion (`Alt + Shift + G`):** Persistent side panel (`490 × 700` default) with Always-on-Top toggle (`Ctrl + Shift + T`), adjustable opacity (`55%–100%`), and screen-edge snapping.
+- **Ask Gemini with Selection (`Alt + Shift + A`):** Captures foreground selection on demand (Windows UI Automation with password-field refusal; Linux KDE Klipper / GTK3 Primary Selection / `wl-paste --primary` / `xclip`), opens an editable review sheet with intent presets (*Raw text*, *Explain*, *Summarize*, *Translate*, *Fix grammar*, *Improve writing*, *Explain code*), and inserts into Gemini's composer.
+- **Screenshot to Gemini (`Alt + Shift + S`):** Native interactive region capture (Windows multi-monitor GDI overlay; Linux XDG Screenshot Portal with `spectacle` / `grim`+`slurp` fallback; macOS `screencapture -i`) with preview review before attaching to Gemini's composer.
+- **Clipboard Actions (`Alt + Shift + C`):** Searchable two-pane command palette with keyboard shortcuts (`Alt + 1..9`), 7 built-in actions, and user-editable prompt templates (`{{text}}` placeholder).
+- **Performance Modes:** Configurable *Efficiency*, *Balanced*, and *Performance* resource profiles with on-demand per-role process-tree telemetry in **Settings → Performance**.
+
+---
+
+## Performance and Resource Usage
+
+GeminiDesk separates **Rust Host** memory (the native shell) from **Full Process-Tree** memory (Rust host plus the embedded OS WebView renderer and network/GPU helpers). Because Google's Gemini web application is a full single-page web app, **Full Process-Tree Private Memory** is the honest headline figure — the Rust host itself is only a small fraction of total RAM.
+
+### Linux Measurements — CachyOS (`v1.0.0`, Real Hardware)
+
+- **System:** CachyOS Linux (`Linux 7.3.4-1-cachyos x86_64`), 6 logical cores, AMD Radeon RX 6600, KDE Plasma 6, Wayland
+- **Renderer:** `webkit2gtk-4.1` (`2.54.3-1`), `gtk3` (`3.24.52`)
+- **Executable / Package Size:** `5.33 MB` release binary · `~2.5 MB` Arch `.pkg.tar.zst`
+- **Methodology:** Isolated clean XDG profile (`/proc/<pid>/smaps_rollup` `Private_Clean + Private_Dirty` and `Rss`; 6-second settled CPU intervals across all logical cores)
+
+| State (`v1.0.0`, Warm Profile) | Processes | Rust Host Private | Full Tree Private | Full Tree RSS | Settled CPU (Host / Total) |
+| --- | --- | --- | --- | --- | --- |
+| **Main Window (Visible, Balanced)** | 3 core* | 51.0 MB | 513.8 MB | 782.1 MB | 1.08% / 17.44%** |
+| **Quick Chat (Visible, Balanced)** | 3 core* | 49.3 MB | 506.9 MB | 762.4 MB | 0.25% / 2.25% |
+| **Background Tray — Balanced** | 3 | 47.5 MB | 535.4 MB | 765.5 MB | **0.00% / 0.00%** |
+| **Background Tray — Efficiency** | 3 | 49.4 MB | 552.5 MB | 782.5 MB | **0.00% / 0.00%** |
+| **Background Tray — Performance** | 3 | 49.8 MB | 534.1 MB | 763.5 MB | 0.00% / 0.11% |
+| **Settings Open (Temporary 2nd Renderer)** | 4 | 55.3 MB | 548.4 MB | 943.7 MB | — |
+
+- **Startup & Reparenting (`v1.0.0`, Cold / Warm):** Native windows ready `127 / 136 ms` · WebKitGTK init `183 / 197 ms` · First navigation `287 / 301 ms` · First Gemini title `734 / 770 ms` · Page interactive `3.74 / 3.14 s` · Single-WebView reparent (Main ↔ Quick Chat ↔ Companion) **`1–2 ms`**.
+- **Optimization Result (`v0.4.0` → `v1.0.0` on Linux):** Enabling explicit WebKitGTK widget hiding (`wk.hide()`), `CacheModel::DocumentViewer` in Efficiency mode, transient `MEMORY_CACHE` trimming, glibc `malloc_trim(0)`, and a single condvar idle timer reduced settled Linux background tray CPU from **`0.28%–0.72%`** down to **`0.000%`** in Balanced and Efficiency modes and reclaimed ~25–40 MB after window switching.
+- **Honest Baseline Note:** The ~415–465 MB `WebKitWebProcess` private memory footprint is inherent to Google's live Gemini web application heap inside WebKitGTK. Unlike WebView2's `TrySuspend`, WebKitGTK 4.1 does not provide a non-destructive renderer page-out API that keeps the live conversation DOM intact without terminating and reloading the process.
+- *\*During the first ~15s after startup, GTK's `gdk-pixbuf` glycin icon loader briefly spawns transient helper processes before exiting to the steady-state 3-process tree (`Rust Host` + `WebKitWebProcess` + `WebKitNetworkProcess`).*
+- *\*\*Measured on the signed-out Gemini landing page while `WEBKIT_DISABLE_DMABUF_RENDERER=1` is active for Wayland multi-toplevel reparenting compatibility; hidden tray CPU drops to `0.000%`.*
+
+### Historical Windows 11 Measurements (Reference Only)
+
+> **Important:** The figures below are **historical observations** collected during earlier development on Windows 11 Pro (`x64`, build 26300, Microsoft Edge WebView2 `157.0.4341.60`). They are **not** fresh `v1.0.0` controlled benchmarks and should not be compared 1:1 against Linux WebKitGTK measurements due to differences in Chromium multi-process architecture, memory accounting (`PrivateUsage` / `WorkingSetSize` vs Linux `smaps_rollup`), and workload state.
+
+| Historical Windows 11 Snapshot | Processes | Rust Host Private / WS | Full Tree Private RAM | Snapshot CPU |
+| --- | --- | --- | --- | --- |
+| **Sample A (Active Session Snapshot)** | 9 (8 WebView2) | 4.2 MB / 25.2 MB | 785.2 MB | 11.44% |
+| **Sample B (Active Session Snapshot)** | 9 (8 WebView2) | 5.6 MB / 31.5 MB | 644.5 MB | 9.95% |
+
+- Earlier Windows prototype warm-start observation loaded `gemini.google.com/app` in approximately `1.1 s`.
+- On Windows, **Efficiency** mode also uses WebView2's native `ICoreWebView2_3::TrySuspend` (strictly guarded against active streaming, audio playback, and navigation) to release renderer working set while minimized to the tray.
 
 ---
 
 ## Installation
 
+Download prebuilt packages from the [GitHub Releases](https://github.com/existye4t/gemini-desk/releases) page.
+
 ### Windows 11 (x64)
-1. **Recommended — Per-User Installer (no admin prompt required):**
-   Download and run `GeminiDesk-0.4.0-Windows-x64-Setup.exe` from [GitHub Releases](https://github.com/existye4t/gemini-desk/releases).
-   - Installs to `%LOCALAPPDATA%\Programs\GeminiDesk`, creates Start Menu & optional Desktop shortcuts, detects Microsoft Edge WebView2 Runtime, supports silent `/S /AUTORESTART` upgrades, and preserves your Google sign-in & settings across all upgrades.
-   - Uninstalling asks explicitly whether to remove saved settings/session data (defaults to **No / Keep data**).
-2. **Portable ZIP:**
-   Extract `GeminiDesk-0.4.0-Windows-x64-Portable.zip` and run `gemini-desk.exe`.
-   - **Profile Note:** Both the Portable ZIP and the Per-User Installer store configuration in `%APPDATA%\geminidesk\GeminiDesk\config\config.toml` and WebView2 session data in `%LOCALAPPDATA%\geminidesk\GeminiDesk\data\webview`, so switching between portable and installed builds preserves your Google sign-in and preferences without duplicating browser data.
 
-### Linux — CachyOS / Arch Linux (KDE Plasma · Wayland · Fish Shell)
-Install runtime and build dependencies:
-```fish
-sudo pacman -S --needed webkit2gtk-4.1 gtk3 openssl xdg-desktop-portal xdg-desktop-portal-kde wl-clipboard rust pkgconf
-```
+- **Recommended:** Download and run `GeminiDesk-1.0.0-Windows-x64-Setup.exe` (per-user install to `%LOCALAPPDATA%\Programs\GeminiDesk`, no administrator elevation required; upgrades preserve settings and Google sign-in).
+- **Portable:** Extract `GeminiDesk-1.0.0-Windows-x64-Portable.zip` and run `gemini-desk.exe`.
 
-**Option A — Clone & build via Arch `PKGBUILD`:**
+### Linux — Arch Linux / CachyOS (Fish shell)
+
+Build and install natively using the repository `PKGBUILD`:
+
 ```fish
+sudo pacman -S --needed base-devel git rust pkgconf webkit2gtk-4.1 gtk3 openssl xdg-desktop-portal xdg-desktop-portal-kde
 git clone https://github.com/existye4t/gemini-desk.git
 cd gemini-desk/packaging/linux
 makepkg -si
 ```
 
-**Option B — Download prebuilt CI / Draft Release artifacts via GitHub CLI (`gh`):**
-```fish
-mkdir -p /tmp/geminidesk-linux; and cd /tmp/geminidesk-linux
-gh run download --repo existye4t/gemini-desk -n geminidesk-linux-x86_64
-chmod +x GeminiDesk-0.4.0-Linux-x86_64.AppImage
-./GeminiDesk-0.4.0-Linux-x86_64.AppImage
+### Linux — Debian / Ubuntu
+
+```bash
+sudo apt install ./GeminiDesk-1.0.0-Linux-x86_64.deb
 ```
 
-**Option C — Build & run directly with Cargo:**
+### Linux — Fedora / RPM-based
+
+```bash
+sudo dnf install ./GeminiDesk-1.0.0-Linux-x86_64.rpm
+```
+
+### Linux — AppImage & Portable Tarball
+
+```bash
+chmod +x GeminiDesk-1.0.0-Linux-x86_64.AppImage
+./GeminiDesk-1.0.0-Linux-x86_64.AppImage
+```
+
+### macOS (Apple Silicon & Intel — Experimental / Unsigned)
+
+Download `GeminiDesk-1.0.0-macOS-AppleSilicon.dmg` (M1–M4) or `GeminiDesk-1.0.0-macOS-Intel.dmg` (x86_64) and drag **GeminiDesk** to `/Applications`.
+
+> Because macOS releases are currently **unsigned and unnotarized**, Gatekeeper will display a warning on first launch and macOS runtime behavior has not yet been verified on physical Mac hardware.
+
+---
+
+## Platform-Specific Requirements
+
+- **Windows 11:** Microsoft Edge WebView2 Runtime (pre-installed on Windows 11; the NSIS installer detects missing WebView2 cleanly).
+- **Linux:** `webkit2gtk-4.1`, `gtk3`, `openssl`, and `xdg-desktop-portal`.
+  - Recommended on KDE Plasma 6 Wayland: `xdg-desktop-portal-kde`, `spectacle`, `wl-clipboard`.
+  - Recommended on GNOME: `xdg-desktop-portal-gtk`, `wl-clipboard`.
+  - Recommended on X11: `xclip`.
+- **macOS:** macOS 13.0 (Ventura) or newer with system `WKWebView`.
+
+---
+
+## Global Shortcuts
+
+| Action | Default Shortcut | Opt-In | CLI Wake Flag |
+| --- | --- | --- | --- |
+| **Quick Chat** | `Alt + Space` | Always enabled | `gemini-desk --quick-chat` |
+| **Main Window** | `Alt + Shift + Space` | Always enabled | `gemini-desk` |
+| **Floating Companion** | `Alt + Shift + G` | Always enabled | `gemini-desk --companion` |
+| **Ask Gemini with Selection** | `Alt + Shift + A` | Opt-in | `gemini-desk --ask-selection` |
+| **Screenshot to Gemini** | `Alt + Shift + S` | Opt-in | `gemini-desk --screenshot` |
+| **Clipboard Actions** | `Alt + Shift + C` | Opt-in | `gemini-desk --clipboard-actions` |
+
+Additional window shortcuts:
+- `Esc` — Dismiss Quick Chat, or safely cancel Account Chooser when no input/dialog is focused.
+- `Alt + Left` — Navigate back cleanly (returns to Gemini when at the start of an account switch).
+- `Ctrl + Shift + E` — Expand Quick Chat or Floating Companion into the Main Window.
+- `Ctrl + Shift + T` — Toggle Floating Companion Always-on-Top.
+- `Ctrl + ,` (`Cmd + ,` on macOS) — Open Settings.
+
+**Linux Wayland note:** On KDE Plasma 6 and other compositors supporting `org.freedesktop.portal.GlobalShortcuts`, GeminiDesk registers shortcuts natively through the XDG portal (and handles permission denial gracefully). On compositors without portal support (such as GNOME Wayland), bind desktop custom shortcuts directly to the CLI flags above — GeminiDesk wakes the running instance over `$XDG_RUNTIME_DIR/io.geminidesk.GeminiDesk.sock`.
+
+---
+
+## Authentication and Account Privacy
+
+- **Direct official Google sign-in:** Authentication runs directly on `accounts.google.com` inside the native OS WebView (`WebView2`, `WebKitGTK 4.1`, or `WKWebView`). Sessions persist locally across restarts in your isolated per-user WebView profile (`0700` owner-only directory permissions on Unix).
+- **Why external-browser OAuth is not used:** Consumer `https://gemini.google.com/app` authenticates via first-party Google web cookies, not OAuth 2.0 API access tokens. Google provides no public, supported API to transfer an external-browser login into embedded WebView cookies. Rather than fabricating a broken OAuth screen, scraping external browser profiles, or using undocumented Google endpoints, GeminiDesk uses Google's official in-WebView sign-in and account chooser and provides an honest **Open Browser** fallback in **Settings → Account**.
+- **Safe Account Switching:** Use **Settings → Account** (`gemini-desk --account`) or Tray → **Google Account & Sign-In…** to sign in, switch accounts, add an account, or sign out. A compact native **Back to Gemini / Cancel** bar appears automatically during account flows; canceling never clears cookies or storage and re-verifies the actual active Google session upon returning.
+- **Zero credential handling:** GeminiDesk never reads Google passwords, never extracts cookies from Zen, Firefox, Chrome, Edge, or Safari, never spoofs User-Agents, and redacts query strings/fragments from all navigation logs.
+
+---
+
+## Automatic Updates
+
+GeminiDesk includes an optional, fail-closed automatic updater (**Settings → About**):
+
+1. Fetches `latest.json` and its detached Ed25519 signature `latest.json.sig` over HTTPS (`ureq` with OS native TLS).
+2. Verifies the Ed25519 signature against GeminiDesk's compile-time pinned public key (`ce042ef3aa7286c10ae6fdd6a886cfee2bc7ec09cd24d1862ca878adc5b1b637`) before parsing JSON.
+3. Enforces SemVer anti-downgrade rules (`remote > current` and `current >= min_supported_version`) and trusted GitHub Releases HTTPS hosts.
+4. Streams downloads into `.part` staging files with incremental SHA-256 verification and pre-install on-disk TOCTOU re-verification.
+5. Never installs silently without explicit user confirmation and always preserves your settings and Google sign-in profile.
+
+Automatic startup checks and automatic downloads can each be toggled independently in **Settings → About**.
+
+---
+
+## Building from Source
+
+### Linux — CachyOS / Arch (Fish shell)
+
 ```fish
+sudo pacman -S --needed base-devel git rust pkgconf webkit2gtk-4.1 gtk3 openssl xdg-desktop-portal xdg-desktop-portal-kde
+git clone https://github.com/existye4t/gemini-desk.git
+cd gemini-desk
 cargo build --release --locked
 ./target/release/gemini-desk
 ```
 
-**Wayland & KDE Plasma Notes:**
-- Verify your portal environment variables in Fish:
-  ```fish
-  echo $XDG_CURRENT_DESKTOP  # Expected: KDE
-  echo $XDG_SESSION_TYPE     # Expected: wayland
-  ```
-- On KDE Plasma 6 Wayland, GeminiDesk registers shortcuts through `org.freedesktop.portal.GlobalShortcuts` (manageable in *System Settings → Keyboard → Shortcuts*). On compositors without the `GlobalShortcuts` portal (such as GNOME Wayland), bind desktop custom shortcuts directly to GeminiDesk's instant Unix-socket CLI commands:
-  - `gemini-desk --quick-chat`
-  - `gemini-desk --companion`
-  - `gemini-desk --clipboard-actions`
-  - `gemini-desk --ask-selection`
-  - `gemini-desk --screenshot`
-- If you encounter WebKitGTK GPU/DMABUF rendering glitches on NVIDIA + Wayland, launch with:
-  ```fish
-  set -x GEMINIDESK_SOFTWARE_RENDER 1
-  set -x WEBKIT_DISABLE_DMABUF_RENDERER 1
-  gemini-desk
-  ```
+### Linux — Ubuntu 24.04 / Debian
 
-### Linux — Debian / Ubuntu / Fedora / AppImage
-- **Debian / Ubuntu (`.deb`):** `sudo apt install ./GeminiDesk-0.4.0-Linux-x86_64.deb` (requires `libwebkit2gtk-4.1-0`, `libgtk-3-0`, `xdg-desktop-portal`).
-- **Fedora (`.rpm`):** `sudo dnf install ./GeminiDesk-0.4.0-Linux-x86_64.rpm` (requires `webkit2gtk4.1`, `gtk3`, `xdg-desktop-portal`).
-- **Lean AppImage:** `chmod +x GeminiDesk-0.4.0-Linux-x86_64.AppImage && ./GeminiDesk-0.4.0-Linux-x86_64.AppImage` — intentionally keeps host `WebKitGTK 4.1` and `GTK3` external rather than bundling a 200+ MB runtime.
-- **Portable Tarball:** `tar -xzf GeminiDesk-0.4.0-Linux-x86_64.tar.gz && ./gemini-desk`
+```bash
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev pkg-config libxdo-dev xdg-desktop-portal
+cargo build --release --locked
+./target/release/gemini-desk
+```
 
-### macOS (Apple Silicon & Intel — Experimental)
-Download `GeminiDesk-0.4.0-macOS-AppleSilicon.dmg` or `GeminiDesk-0.4.0-macOS-Intel.dmg`, or build locally:
+### Windows 11 (PowerShell)
+
+```powershell
+cargo build --release --locked
+.\target\release\gemini-desk.exe
+```
+
+### macOS
+
 ```bash
 cargo build --release --locked
-./packaging/macos/build-bundle.sh 0.4.0 aarch64
+./target/release/gemini-desk
 ```
-> **macOS Signing & Gatekeeper Notice:** Production macOS distribution requires Apple Developer ID signing (`MACOS_SIGNING_IDENTITY`) and Apple notarization (`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`) configured in CI secrets. Unsigned local/CI `.dmg` builds are development previews only — GeminiDesk never instructs users to disable Gatekeeper.
 
 ---
 
-## Keyboard Shortcuts
+## Development and Testing
 
-| Action | Default Shortcut | Notes |
-| --- | --- | --- |
-| Toggle Quick Chat | `Alt + Space` | Always active; customizable in Settings → Shortcuts |
-| Open Full Window | `Alt + Shift + Space` | Always active |
-| Toggle Floating Companion | `Alt + Shift + G` | Always active |
-| Ask Gemini with Selection | `Alt + Shift + A` | Opt-in (Settings → Productivity) |
-| Screenshot to Gemini | `Alt + Shift + S` | Opt-in (Settings → Productivity) |
-| Clipboard Actions | `Alt + Shift + C` | Opt-in (Settings → Productivity) |
-| Settings | `Ctrl + ,` / `Cmd + ,` | In-app shortcut |
-| Expand Quick Chat / Companion | `Ctrl + Shift + E` | Expands into Main Window |
-| Toggle Companion Always-on-Top | `Ctrl + Shift + T` | While Companion is focused |
-| Hide Quick Chat | `Esc` | Preserves conversation |
+Run the full local quality gate before submitting changes:
 
----
+```fish
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo build --release --locked
+```
 
-## CLI Flags
+Linux metadata validation:
 
-- `--minimized` / `--tray`: Start quietly in the system tray.
-- `--quick-chat`: Launch or wake directly into Quick Chat.
-- `--companion`: Launch or wake directly into Floating Companion.
-- `--settings` / `--settings=<tab>`: Open Settings (e.g., `--settings=account`, `--settings=about`, `--settings=performance`).
-- `--account`: Open Settings directly on the Google Account & Sign-In tab.
-- `--sign-in`: Open the Main Window directly to Google's official Account Chooser (`accounts.google.com/AccountChooser`).
-- `--clipboard-actions`: Open Clipboard Actions command palette.
-- `--ask-selection`: Open Ask Gemini with Selection sheet.
-- `--screenshot`: Trigger interactive Screenshot to Gemini capture.
-- `--preview-theme=<dark|light|system>`: Preview theme without modifying `config.toml`.
-
----
-
-## Measured Windows 11 Performance (`v0.4.0` vs `v0.3.1`, Release Build)
-
-Measured on Windows 11 Pro (Build 26300, x64, 6 logical cores, WebView2 Runtime `157.0.4341.60`) against a live authenticated Google Gemini Pro session (`15s` settle + sustained `30s` continuous sampling across the full process tree, normalized by 6 logical cores):
-
-| Scenario / Metric | `v0.3.1` (60s settled) | `v0.4.0` Final (30s settled) | Notes |
-| --- | --- | --- | --- |
-| Release executable size | `2.13 MB` | **`2.68 MB` (`2,814,976 B`)** | Adds embedded multi-res `.ico`, `VERSIONINFO`, Ed25519 + SHA-256 + HTTPS updater |
-| Windows NSIS Installer / Portable ZIP | — | **`1.19 MB` / `1.37 MB`** | LZMA-compressed per-user installer (`1,251,227 B`) & portable ZIP (`1,437,003 B`) |
-| Native windows ready (Run 1 / Warm) | `28 ms` / `39 ms` | **`42 ms` / `49 ms`** | — |
-| WebView2 initialized (Run 1 / Warm) | `360 ms` / `406 ms` | **`342 ms` / `365 ms`** | — |
-| First visible Gemini title (Run 1 / Warm) | `2,050 ms` / `2,434 ms` | **`1,997 ms` / `1,960 ms`** | Includes network round-trip |
-| Quick Chat / Companion reparent latency | `17 ms` | **`16 ms` / `20 ms`** | Single shared live renderer |
-| Rust host Private RAM / Idle CPU | `3.63–3.73 MB` / `0.000%` | **`4.73–5.31 MB` / `0.000%–0.035%`** | `0.000s` Rust CPU time in Quick Chat, Companion, Settings & Efficiency tray |
-| Visible Gemini Home (settled) | `714.4 MB` Priv · `932.5 MB` WS · `7.22%` CPU | **`719.27 MB` Priv · `990.18 MB` WS · `6.684%` CPU** | 8 processes (1 renderer: `470.78 MB` Priv) |
-| Quick Chat / Companion Idle (12s) | — | **`722.21 MB` / `727.28 MB` Priv · `5.664%` / `5.816%` CPU** | Zero extra renderer processes |
-| Taskbar-Minimized (`SW_MINIMIZE`, 30s) | `436.9 MB` Priv · `93.5 MB` WS · `0.078%` CPU | Same engine path | **−89% WS, −98% CPU** vs visible |
-| Background Tray — **Balanced** (30s) | `284.2 MB` Priv · `241.6 MB` WS · `0.417%` CPU | **`291.36 MB` Priv · `224.24 MB` WS · `0.321%` CPU** | Instant wake |
-| Background Tray — **Efficiency Safe-Suspended** (30s) | `282.9 MB` Priv · `64.2 MB` WS · `0.061%` CPU | **`285.34 MB` Priv · `78.02 MB` WS · `0.052%` CPU** | Renderer WS: **`0.92 MB`**; Rust CPU: **`0.000%`**; Quick Chat wake **`21 ms`** |
-
----
-
-## Measured CachyOS Linux Performance (`v0.4.0`, Release Build)
-
-Measured on CachyOS Linux (`Linux 7.3.4-1-cachyos`, `x86_64`, 6 logical cores, AMD Radeon RX 6600, KDE Plasma 6 Wayland, `webkit2gtk-4.1` `2.54.3-1`, `gtk3` `3.24.52`) across the full `/proc` process tree (`smaps_rollup` `Private_Clean + Private_Dirty` and `Rss`):
-
-| Scenario / Metric | `v0.4.0` CachyOS Wayland | Notes |
-| --- | --- | --- |
-| Release executable size | **`5.21 MB` (`5,468,008 B`)** | Links system `libwebkit2gtk-4.1.so`, `libgtk-3.so`, and `libssl.so` |
-| Native Arch/CachyOS Package (`makepkg`) | **`2.49 MB` (`2,612,210 B`)** | `geminidesk-0.4.0-1-x86_64.pkg.tar.zst` (binary, `.desktop`, AppStream XML, hicolor SVG/PNG icons, licenses) |
-| Native windows ready | **`134–149 ms`** | GTK3 Wayland + XDG Settings Portal dark-mode query |
-| WebKitGTK initialized | **`186–208 ms`** | Persistent `WebsiteDataManager` (`~/.local/share/geminidesk/webview`) |
-| First navigation dispatched | **`249–267 ms`** | `https://gemini.google.com/app` |
-| First visible Gemini title | **`723–815 ms`** | Includes network round-trip |
-| Quick Chat / Companion reparent latency | **`0–2 ms`** | Single shared `WebKitWebView` moved across GTK containers |
-| Process count (Main / Quick Chat / Companion / Tray) | **`3` processes (`1` renderer)** | `gemini-desk` (Rust Host) + `1` `WebKitWebProcess` + `1` `WebKitNetworkProcess` |
-| Visible Gemini Home (settled) | **`522.74 MB` Priv · `740.96 MB` RSS** | Rust Host: `49.57 MB` Priv (includes in-process GTK3/Mesa Wayland surfaces); Renderer: `434.81 MB` Priv; Network: `38.36 MB` Priv |
-| Floating Companion Idle (settled) | **`530.16 MB` Priv · `747.52 MB` RSS** | Zero extra `WebKitWebProcess` renderers |
-| Background System Tray (`--minimized`, settled) | **`500.76 MB` Priv · `720.14 MB` RSS · `0.533%` CPU** | Rust Host Private: `47.11 MB` · Rust Host CPU: **`0.067%`** |
-
----
-
-## Privacy, Security & Data Locations
-
-See [SECURITY.md](SECURITY.md) for the complete threat model and isolation boundaries.
-
-- **Windows:**
-  - Config & Window State: `%APPDATA%\geminidesk\GeminiDesk\config\`
-  - WebView2 Profile & Updates: `%LOCALAPPDATA%\geminidesk\GeminiDesk\data\`
-- **Linux:**
-  - Config & Window State: `~/.config/geminidesk/`
-  - WebKitGTK Data & Updates: `~/.local/share/geminidesk/`
-- **macOS:**
-  - Config & Window State: `~/Library/Application Support/dev.geminidesk.GeminiDesk/`
-  - WKWebView Data: macOS default persistent `WKWebsiteDataStore` (`~/Library/WebKit/io.geminidesk.GeminiDesk/`)
-
----
-
-## Troubleshooting
-
-- **Windows — WebView2 Runtime Missing:** If GeminiDesk prompts that Microsoft Edge WebView2 Runtime is missing, install Microsoft's official Evergreen WebView2 Runtime (`https://developer.microsoft.com/en-us/microsoft-edge/webview2/`).
-- **Windows — Clearing Cached Assets Without Signing Out:** Open **Settings → Privacy → Clear Cached Web Assets** to purge HTTP/GPU caches while keeping your Google sign-in cookies intact.
-- **Linux (Wayland / KDE Plasma) — Global Shortcuts or Screenshots Not Firing:** Confirm `xdg-desktop-portal` and `xdg-desktop-portal-kde` are running (`systemctl --user status xdg-desktop-portal`) and `wl-clipboard` is installed. If your compositor does not expose `org.freedesktop.portal.GlobalShortcuts`, bind desktop shortcuts directly to `gemini-desk --quick-chat`, `--companion`, `--clipboard-actions`, `--ask-selection`, or `--screenshot`.
-- **Linux (NVIDIA + Wayland) — Blank or Flickering WebKitGTK Canvas:** Export `GEMINIDESK_SOFTWARE_RENDER=1` and `WEBKIT_DISABLE_DMABUF_RENDERER=1` before launching `gemini-desk`.
-
----
-
-## Release Signing & Updater Key Rotation
-
-GeminiDesk authenticates release manifests (`latest.json` + `latest.json.sig`) using an offline-generated **Ed25519** keypair (`scripts/release_manifest.py`):
-- **Active Public Verifying Key (`v0.4.0`):** `ce042ef3aa7286c10ae6fdd6a886cfee2bc7ec09cd24d1862ca878adc5b1b637` (embedded in `src/updater/mod.rs` and stored in the `GEMINIDESK_UPDATER_PUBKEY` repository variable).
-- **Private Signing Seed:** Stored exclusively in the `UPDATER_SIGNING_PRIVATE_KEY` GitHub Actions secret and never committed to source control.
-- **Independent Verification:**
-  ```bash
-  python3 scripts/release_manifest.py --verify latest.json latest.json.sig ce042ef3aa7286c10ae6fdd6a886cfee2bc7ec09cd24d1862ca878adc5b1b637
-  ```
-- **Rotation & Emergency Revocation:** See [SECURITY.md](SECURITY.md) for the step-by-step key rotation and emergency key-revocation procedures.
+```fish
+desktop-file-validate packaging/linux/io.geminidesk.GeminiDesk.desktop
+appstreamcli validate --no-net packaging/linux/io.geminidesk.GeminiDesk.metainfo.xml
+```
 
 ---
 
 ## Known Limitations
 
-- **External Browser → WebView Session Handoff Not Supported by Google:** Google's consumer Gemini web application (`https://gemini.google.com/app`) authenticates strictly via first-party Google web session cookies (`accounts.google.com` → `SetSID`) rather than third-party OAuth 2.0 access/ID tokens. Google provides no public API to convert an external-browser OAuth login into `gemini.google.com` session cookies, and GeminiDesk refuses to fake OAuth, scrape external browser cookie databases (Zen/Firefox/Chrome/Safari), spoof User-Agents, or call undocumented endpoints (`MergeSession`). GeminiDesk uses Google's genuine in-WebView Account Chooser / Sign-In flow with persistent native WebView storage and provides an explicit *Open Gemini in Default Browser* fallback if Google ever challenges an embedded WebView.
-- **macOS Signing & Notarization:** Automated signing and notarization are wired into `packaging/macos/build-bundle.sh` and `.github/workflows/release.yml`, but require Apple Developer credentials in repository secrets before distributing publicly.
-- **Google-hosted "Download app" button:** Intentionally left unmodified inside `gemini.google.com` to avoid DOM injection or header spoofing.
+- **WebView Memory Baseline:** While the Rust host is minimal, Google's live Gemini web application requires ~415–465 MB inside `WebKitWebProcess` on Linux (and ~645–785 MB across Chromium/WebView2 processes in historical Windows snapshots).
+- **Wayland Global Window Positioning:** Wayland compositors intentionally prevent clients from setting arbitrary global `(x, y)` coordinates; KWin/Mutter control final placement for floating windows.
+- **Linux WebKitGTK Multi-Toplevel Reparenting:** GeminiDesk sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` on Linux (unless explicitly overridden in the environment) to prevent blank DMABuf surfaces when reparenting the shared `WebKitWebView` across Main Window, Quick Chat, and Floating Companion on Wayland.
+- **macOS Status:** macOS builds are compiled and packaged in CI, but remain unsigned, unnotarized, and untested on physical Mac hardware.
+- **External Browser Session Transfer:** Google does not support transferring external browser logins (Zen, Firefox, Chrome, Safari) into embedded WebView cookies for `gemini.google.com/app`.
 
 ---
 
-## Contributing, Changelog & License
+## Contributing
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Development setup & PR checklist
-- [SECURITY.md](SECURITY.md) — Security architecture, key rotation & vulnerability disclosure
-- [CHANGELOG.md](CHANGELOG.md) — Version history
-- **License:** Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
-- **Third-Party Typography:** Bundled Geist & Geist Mono variable fonts are licensed under the **SIL Open Font License 1.1** — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [assets/fonts/OFL-Geist.txt](assets/fonts/OFL-Geist.txt).
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for architecture principles, coding guidelines, and testing expectations.
+
+---
+
+## Security
+
+Security boundaries, key rotation procedures, and responsible vulnerability disclosure instructions are documented in [SECURITY.md](SECURITY.md). Please report security vulnerabilities privately via GitHub Security Advisories rather than public issues.
+
+---
+
+## License
+
+Dual-licensed under either of:
+
+- **MIT License** ([LICENSE-MIT](LICENSE-MIT))
+- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE))
+
+Bundled **Geist** and **Geist Mono** fonts are licensed under the SIL Open Font License 1.1 ([assets/fonts/OFL-Geist.txt](assets/fonts/OFL-Geist.txt)). See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full attribution.
+
+---
+
+## Disclaimer
+
+GeminiDesk is an independent open-source project and is **not** developed by, affiliated with, endorsed by, or sponsored by Google LLC. "Google" and "Gemini" are trademarks of Google LLC. All Google accounts, subscriptions, AI models, and conversations remain governed by Google's terms and privacy policies.

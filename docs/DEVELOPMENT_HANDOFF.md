@@ -1,6 +1,6 @@
-# GeminiDesk `v0.4.0` — Technical Development Handoff
+# GeminiDesk `v1.0.0` — Architecture & Maintenance Reference
 
-> **Purpose:** Self-contained engineering reference for an Antigravity agent resuming **GeminiDesk** development and real-hardware testing on **CachyOS Linux (KDE Plasma · Wayland · Fish shell)** without access to the prior Windows 11 development session.
+> **Purpose:** Concise engineering reference covering **GeminiDesk**'s native cross-platform architecture, platform verification status, build pipelines, and cryptographic release workflow.
 
 ---
 
@@ -105,12 +105,12 @@ gemini-desk/
 
 ---
 
-## 2. Current Implementation Status (`v0.4.0`)
+## 2. Current Implementation Status (`v1.0.0`)
 
-- **Version:** `0.4.0`
-- **Windows 11 (`x86_64-pc-windows-msvc`):** **Production-Verified on Real Hardware.** Compiled, all 31 unit tests pass, packaged into per-user NSIS installer (`GeminiDesk-0.4.0-Windows-x64-Setup.exe`) and Portable ZIP (`GeminiDesk-0.4.0-Windows-x64-Portable.zip`), installer lifecycle verified, end-to-end auto-update lifecycle (`0.3.9` → `0.4.0` with `/S /AUTORESTART`) verified, and 30s settled performance benchmarks recorded.
-- **Linux (`x86_64-unknown-linux-gnu`):** **Desktop-Verified on Real CachyOS Hardware (`Linux 7.3.4-1-cachyos` · KDE Plasma 6 · Wayland · WebKitGTK `2.54.3`); Interactive User Google Sign-In Test Ready.** Compiles cleanly with `cargo clippy --all-targets -- -D warnings`, passes all 38 unit tests, passes `desktop-file-validate` and `appstreamcli validate --no-net`, builds native CachyOS/Arch `.pkg.tar.zst` via `makepkg` (`2.49 MB`), and is verified on real KDE Plasma 6 Wayland hardware (single-WebView reparenting across Main/Quick Chat/Companion in `0–2 ms`, `ksni` tray, XDG `GlobalShortcuts`/`Screenshot`/`Settings` portals, native Klipper D-Bus + GTK3 clipboard, `/proc` telemetry, and settled benchmarks). Google `accounts.google.com` renders cleanly in WebKitGTK `2.54.3` without embedded-browser rejection; final interactive sign-in & restart persistence confirmation awaits user participation.
-- **macOS (`aarch64-apple-darwin` & `x86_64-apple-darwin`):** **Implemented, Compiled, Packaged & CI-Validated (`macos-15`); Real-Hardware macOS & Apple Developer ID Notarization Pending.** Compiles cleanly for both Apple Silicon and Intel with `-D warnings`, passes all 31 unit tests on `macos-15`, and builds verified `.app` and `.dmg` bundles.
+- **Version:** `1.0.0` (Public Stable Release)
+- **Windows 11 (`x86_64-pc-windows-msvc`):** **Previously Real-Hardware Tested & CI-Verified.** Compiles cleanly with `-D warnings`, passes all 46 unit tests on CI, and packages into per-user NSIS installer (`GeminiDesk-1.0.0-Windows-x64-Setup.exe`) and Portable ZIP (`GeminiDesk-1.0.0-Windows-x64-Portable.zip`).
+- **Linux (`x86_64-unknown-linux-gnu`):** **Real-Hardware Verified on CachyOS (`Linux 7.3.4-1-cachyos` · KDE Plasma 6 · Wayland · WebKitGTK `2.54.3`).** User-verified Google sign-in, authenticated conversations, full-restart session persistence, and account switching; native account-switching navigation bar (`Back to Gemini` / `Cancel` / `Alt+Left` / safe `Escape`); non-blocking XDG `GlobalShortcuts` portal with conflict detection and `Session::Close`; native D-Bus desktop notifications; WebKitGTK background visibility hiding + `MEMORY_CACHE` trimming + glibc `malloc_trim(0)` (`0.000%` settled tray CPU); and verified Arch `makepkg` `.pkg.tar.zst` (`2.6 MB`), `.deb`, `.rpm`, `.AppImage`, and `.tar.gz` packages.
+- **macOS (`aarch64-apple-darwin` & `x86_64-apple-darwin`):** **Experimental / Unsigned (CI-Built Only).** Compiles cleanly for Apple Silicon and Intel with `-D warnings`, passes all unit tests on `macos-15`, and builds verified unsigned `.dmg` bundles. Real-hardware macOS runtime testing and Apple Developer ID signing/notarization remain pending.
 
 ---
 

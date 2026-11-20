@@ -13,7 +13,7 @@ Unicode true
 !include "LogicLib.nsh"
 
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.4.0"
+  !define PRODUCT_VERSION "1.0.0"
 !endif
 !ifndef BINARY_PATH
   !define BINARY_PATH "..\..\target\release\gemini-desk.exe"

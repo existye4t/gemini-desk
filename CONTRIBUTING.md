@@ -1,6 +1,6 @@
 # Contributing to GeminiDesk
 
-Thank you for your interest in contributing to **GeminiDesk** — an independent, unofficial lightweight Rust desktop client for Google Gemini.
+Thank you for your interest in contributing to **GeminiDesk** — an independent lightweight Rust desktop client for Google Gemini.
 
 ## Guiding Principles
 

@@ -2,7 +2,7 @@
 # Arch Linux / CachyOS PKGBUILD for GeminiDesk (Wayland / KDE Plasma / X11)
 
 pkgname=geminidesk
-pkgver=0.4.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="Lightweight native Rust desktop client for Google Gemini (WebKitGTK)"
 arch=('x86_64' 'aarch64')
@@ -27,6 +27,7 @@ optdepends=(
   'spectacle: KDE fallback interactive region screenshot capture'
   'grim: wlroots fallback screenshot capture'
   'slurp: wlroots region selector for grim'
+  'libnotify: Fallback desktop notifications (notify-send) if D-Bus notifications are unavailable'
 )
 source=()
 sha256sums=()

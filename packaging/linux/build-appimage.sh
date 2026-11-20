@@ -10,7 +10,7 @@
 #   - Fedora: webkit2gtk4.1 gtk3 xdg-desktop-portal
 set -euo pipefail
 
-VERSION="${1:-0.4.0}"
+VERSION="${1:-1.0.0}"
 ARCH="${2:-x86_64}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN_PATH="${REPO_ROOT}/target/release/gemini-desk"
