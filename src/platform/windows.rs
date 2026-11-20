@@ -40,6 +40,9 @@ pub const WM_ACTIVATE_MAIN: u32 = WM_APP + 0x101;
 pub const WM_ACTIVATE_QUICK_CHAT: u32 = WM_APP + 0x102;
 pub const WM_ACTIVATE_COMPANION: u32 = WM_APP + 0x103;
 pub const WM_ACTIVATE_SETTINGS: u32 = WM_APP + 0x104;
+pub const WM_ACTIVATE_CLIPBOARD: u32 = WM_APP + 0x105;
+pub const WM_ACTIVATE_ASK_SELECTION: u32 = WM_APP + 0x106;
+pub const WM_ACTIVATE_SCREENSHOT: u32 = WM_APP + 0x107;
 
 pub const MAIN_WINDOW_TITLE_BASE: &str = "GeminiDesk — Unofficial Gemini Client";
 
@@ -425,6 +428,9 @@ pub fn acquire_single_instance(target: ActivationTarget) -> Option<SingleInstanc
                     ActivationTarget::QuickChat => WM_ACTIVATE_QUICK_CHAT,
                     ActivationTarget::Companion => WM_ACTIVATE_COMPANION,
                     ActivationTarget::Settings => WM_ACTIVATE_SETTINGS,
+                    ActivationTarget::ClipboardActions => WM_ACTIVATE_CLIPBOARD,
+                    ActivationTarget::AskSelection => WM_ACTIVATE_ASK_SELECTION,
+                    ActivationTarget::Screenshot => WM_ACTIVATE_SCREENSHOT,
                 };
                 let _ = PostMessageW(Some(hwnd), msg, WPARAM(0), LPARAM(0));
             }
@@ -487,6 +493,18 @@ unsafe extern "system" fn activation_subclass_proc(
             }
             WM_ACTIVATE_SETTINGS => {
                 let _ = proxy.send_event(crate::app::AppEvent::OpenSettings(None));
+                return LRESULT(0);
+            }
+            WM_ACTIVATE_CLIPBOARD => {
+                let _ = proxy.send_event(crate::app::AppEvent::InvokeClipboardActions);
+                return LRESULT(0);
+            }
+            WM_ACTIVATE_ASK_SELECTION => {
+                let _ = proxy.send_event(crate::app::AppEvent::InvokeAskSelection);
+                return LRESULT(0);
+            }
+            WM_ACTIVATE_SCREENSHOT => {
+                let _ = proxy.send_event(crate::app::AppEvent::InvokeScreenshot);
                 return LRESULT(0);
             }
             WM_NCDESTROY => unsafe {

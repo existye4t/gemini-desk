@@ -199,7 +199,11 @@ pub fn style_quick_chat_window(window: &Window, dark: bool) {
 pub fn set_window_opacity(window: &Window, opacity_pct: u8) {
     #[cfg(target_os = "windows")]
     windows::set_window_opacity(window, opacity_pct);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    linux::set_window_opacity(window, opacity_pct);
+    #[cfg(target_os = "macos")]
+    macos::set_window_opacity(window, opacity_pct);
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = (window, opacity_pct);
     }
@@ -292,7 +296,11 @@ pub fn is_geometry_on_any_monitor(
 pub fn focus_window(window: &Window) {
     #[cfg(target_os = "windows")]
     windows::focus_window(window);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    linux::focus_window(window);
+    #[cfg(target_os = "macos")]
+    macos::focus_window(window);
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         window.set_focus();
     }
@@ -304,7 +312,15 @@ pub fn is_window_still_active_or_owned(window: &Window) -> bool {
     {
         windows::is_window_still_active_or_owned(window)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::is_window_still_active_or_owned(window)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::is_window_still_active_or_owned(window)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = window;
         false
@@ -359,12 +375,35 @@ pub enum ActivationTarget {
     QuickChat,
     Companion,
     Settings,
+    ClipboardActions,
+    AskSelection,
+    Screenshot,
 }
 
 /// Guard holding a single-instance OS lock for the lifetime of the primary process.
 pub struct SingleInstanceGuard {
     #[cfg(target_os = "windows")]
     _inner: windows::SingleInstanceHandle,
+    #[cfg(target_os = "linux")]
+    inner: linux::SingleInstanceHandle,
+    #[cfg(target_os = "macos")]
+    inner: macos::SingleInstanceHandle,
+}
+
+impl SingleInstanceGuard {
+    /// Starts background single-instance activation listening on Unix platforms (Linux/macOS).
+    /// On Windows, activation messages are handled directly by the Win32 window subclass.
+    pub fn start_activation_listener(
+        &mut self,
+        proxy: tao::event_loop::EventLoopProxy<crate::app::AppEvent>,
+    ) {
+        #[cfg(target_os = "linux")]
+        linux::start_activation_listener(&mut self.inner, proxy);
+        #[cfg(target_os = "macos")]
+        macos::start_activation_listener(&mut self.inner, proxy);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let _ = proxy;
+    }
 }
 
 pub fn acquire_single_instance(target: ActivationTarget) -> Option<SingleInstanceGuard> {
@@ -372,10 +411,48 @@ pub fn acquire_single_instance(target: ActivationTarget) -> Option<SingleInstanc
     {
         windows::acquire_single_instance(target).map(|_inner| SingleInstanceGuard { _inner })
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::acquire_single_instance(target).map(|inner| SingleInstanceGuard { inner })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::acquire_single_instance(target).map(|inner| SingleInstanceGuard { inner })
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = target;
         Some(SingleInstanceGuard {})
+    }
+}
+
+/// Returns a concise, honest platform runtime label surfaced in Settings -> About.
+pub fn platform_runtime_label() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        format!("Windows ({}) · WebView2", std::env::consts::ARCH)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let session = if linux::is_wayland_session() {
+            "Wayland"
+        } else {
+            "X11"
+        };
+        format!(
+            "Linux ({}) · {} · {} · WebKitGTK",
+            std::env::consts::ARCH,
+            linux::desktop_environment(),
+            session
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        format!("macOS ({}) · WKWebView", std::env::consts::ARCH)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)
     }
 }
 

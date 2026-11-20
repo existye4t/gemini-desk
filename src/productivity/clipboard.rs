@@ -19,28 +19,44 @@ pub fn read_unicode_text(max_chars: usize) -> ClipboardText {
     {
         windows_impl::read_unicode_text(max_chars)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_impl::read_unicode_text(max_chars)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_impl::read_unicode_text(max_chars)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = max_chars;
         ClipboardText::Unavailable("Clipboard reading not yet implemented on this OS".into())
     }
 }
 
-/// Writes UTF-16 Unicode text to the system clipboard.
+/// Writes UTF-16/UTF-8 Unicode text to the system clipboard.
 pub fn write_unicode_text(text: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         windows_impl::write_unicode_text(text)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_impl::write_unicode_text(text)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_impl::write_unicode_text(text)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = text;
         Err("Clipboard writing not yet implemented on this OS".into())
     }
 }
 
-/// Writes an in-memory screenshot to the system clipboard in both `CF_DIB` and `"PNG"` formats
-/// so Gemini (WebView2) and all native Windows apps accept `Ctrl+V` cleanly.
+/// Writes an in-memory screenshot to the system clipboard (`CF_DIB`+`PNG` on Windows,
+/// `image/png` on Linux Wayland/X11, `NSPasteboardTypePNG` on macOS).
 pub fn write_image(
     bgra_pixels: &[u8],
     width: u32,
@@ -51,11 +67,27 @@ pub fn write_image(
     {
         windows_impl::write_image(bgra_pixels, width, height, png_bytes)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (bgra_pixels, width, height);
+        linux_impl::write_png_image(png_bytes)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (bgra_pixels, width, height);
+        macos_impl::write_png_image(png_bytes)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = (bgra_pixels, width, height, png_bytes);
         Err("Image clipboard writing not yet implemented on this OS".into())
     }
+}
+
+/// Linux-only helper reading the X11/Wayland Primary Selection strictly on explicit user invocation.
+#[cfg(target_os = "linux")]
+pub fn read_primary_selection(max_chars: usize) -> ClipboardText {
+    linux_impl::read_primary_selection(max_chars)
 }
 
 /// Non-destructive clipboard snapshot preserving common memory-backed formats (text, HTML, RTF, DIB, PNG).
@@ -320,6 +352,239 @@ mod windows_impl {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    use super::ClipboardText;
+    use crate::platform::linux::is_wayland_session;
+
+    fn run_read_cmd(cmd: &str, args: &[&str]) -> Option<Result<String, ()>> {
+        let out = Command::new(cmd).args(args).output().ok()?;
+        if !out.status.success() {
+            return Some(Err(()));
+        }
+        Some(Ok(String::from_utf8_lossy(&out.stdout).into_owned()))
+    }
+
+    fn format_text(raw: String, max_chars: usize) -> ClipboardText {
+        if raw.trim().is_empty() {
+            return ClipboardText::Empty;
+        }
+        let mut truncated = false;
+        let text = if raw.chars().count() > max_chars {
+            truncated = true;
+            raw.chars().take(max_chars).collect()
+        } else {
+            raw
+        };
+        ClipboardText::Text { text, truncated }
+    }
+
+    pub fn read_unicode_text(max_chars: usize) -> ClipboardText {
+        let candidates: &[(&str, &[&str])] = if is_wayland_session() {
+            &[
+                (
+                    "wl-paste",
+                    &["--no-newline", "--type", "text/plain;charset=utf-8"],
+                ),
+                ("wl-paste", &["--no-newline"]),
+                ("xclip", &["-o", "-selection", "clipboard"]),
+                ("xsel", &["-ob"]),
+            ]
+        } else {
+            &[
+                ("xclip", &["-o", "-selection", "clipboard"]),
+                ("xsel", &["-ob"]),
+                ("wl-paste", &["--no-newline"]),
+            ]
+        };
+
+        let mut any_tool = false;
+        for (bin, args) in candidates {
+            if let Some(res) = run_read_cmd(bin, args) {
+                any_tool = true;
+                if let Ok(raw) = res {
+                    return format_text(raw, max_chars);
+                }
+            }
+        }
+
+        if any_tool {
+            ClipboardText::Empty
+        } else {
+            ClipboardText::Unavailable(
+                "Install `wl-clipboard` (Wayland) or `xclip` (X11) for clipboard access.".into(),
+            )
+        }
+    }
+
+    pub fn read_primary_selection(max_chars: usize) -> ClipboardText {
+        let candidates: &[(&str, &[&str])] = if is_wayland_session() {
+            &[
+                ("wl-paste", &["--primary", "--no-newline"]),
+                ("xclip", &["-o", "-selection", "primary"]),
+                ("xsel", &["-op"]),
+            ]
+        } else {
+            &[
+                ("xclip", &["-o", "-selection", "primary"]),
+                ("xsel", &["-op"]),
+            ]
+        };
+
+        for (bin, args) in candidates {
+            if let Some(Ok(raw)) = run_read_cmd(bin, args) {
+                return format_text(raw, max_chars);
+            }
+        }
+        ClipboardText::Empty
+    }
+
+    fn pipe_to_cmd(bin: &str, args: &[&str], data: &[u8]) -> Option<Result<(), String>> {
+        let mut child = Command::new(bin)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+
+        if let Some(mut stdin) = child.stdin.take()
+            && let Err(err) = stdin.write_all(data)
+        {
+            return Some(Err(format!("{bin} write failed: {err}")));
+        }
+
+        match child.wait() {
+            Ok(status) if status.success() => Some(Ok(())),
+            Ok(status) => Some(Err(format!("{bin} exited with {status}"))),
+            Err(err) => Some(Err(format!("{bin} wait failed: {err}"))),
+        }
+    }
+
+    pub fn write_unicode_text(text: &str) -> Result<(), String> {
+        let candidates: &[(&str, &[&str])] = if is_wayland_session() {
+            &[
+                ("wl-copy", &[]),
+                ("xclip", &["-i", "-selection", "clipboard"]),
+                ("xsel", &["-ib"]),
+            ]
+        } else {
+            &[
+                ("xclip", &["-i", "-selection", "clipboard"]),
+                ("xsel", &["-ib"]),
+                ("wl-copy", &[]),
+            ]
+        };
+
+        for (bin, args) in candidates {
+            if let Some(res) = pipe_to_cmd(bin, args, text.as_bytes()) {
+                return res;
+            }
+        }
+        Err("Install `wl-clipboard` (Wayland) or `xclip` (X11) to write to the clipboard.".into())
+    }
+
+    pub fn write_png_image(png_bytes: &[u8]) -> Result<(), String> {
+        if png_bytes.is_empty() {
+            return Err("Empty PNG image buffer".into());
+        }
+        let candidates: &[(&str, &[&str])] = if is_wayland_session() {
+            &[
+                ("wl-copy", &["--type", "image/png"]),
+                (
+                    "xclip",
+                    &["-selection", "clipboard", "-t", "image/png", "-i"],
+                ),
+            ]
+        } else {
+            &[
+                (
+                    "xclip",
+                    &["-selection", "clipboard", "-t", "image/png", "-i"],
+                ),
+                ("wl-copy", &["--type", "image/png"]),
+            ]
+        };
+
+        for (bin, args) in candidates {
+            if let Some(res) = pipe_to_cmd(bin, args, png_bytes) {
+                return res;
+            }
+        }
+        Err("Install `wl-clipboard` (Wayland) or `xclip` (X11) to copy images.".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos_impl {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
+    use objc2_foundation::NSData;
+
+    use super::ClipboardText;
+
+    pub fn read_unicode_text(max_chars: usize) -> ClipboardText {
+        let Ok(out) = Command::new("/usr/bin/pbpaste").output() else {
+            return ClipboardText::Unavailable("macOS pbpaste unavailable".into());
+        };
+        if !out.status.success() {
+            return ClipboardText::Empty;
+        }
+        let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+        if raw.trim().is_empty() {
+            return ClipboardText::Empty;
+        }
+        let mut truncated = false;
+        let text = if raw.chars().count() > max_chars {
+            truncated = true;
+            raw.chars().take(max_chars).collect()
+        } else {
+            raw
+        };
+        ClipboardText::Text { text, truncated }
+    }
+
+    pub fn write_unicode_text(text: &str) -> Result<(), String> {
+        let mut child = Command::new("/usr/bin/pbcopy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn pbcopy: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(text.as_bytes())
+                .map_err(|e| format!("Failed writing to pbcopy: {e}"))?;
+        }
+        let status = child
+            .wait()
+            .map_err(|e| format!("Failed waiting for pbcopy: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("pbcopy exited with {status}"))
+        }
+    }
+
+    pub fn write_png_image(png_bytes: &[u8]) -> Result<(), String> {
+        if png_bytes.is_empty() {
+            return Err("Empty PNG image buffer".into());
+        }
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        let data = NSData::with_bytes(png_bytes);
+        let ok = unsafe { pasteboard.setData_forType(Some(&data), NSPasteboardTypePNG) };
+        if ok {
+            Ok(())
+        } else {
+            Err("NSPasteboard failed to store PNG data".into())
         }
     }
 }

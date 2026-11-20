@@ -5,6 +5,10 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use tracing::warn;
 use wry::{WebContext, WebView, WebViewBuilder};
 
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
+#[cfg(target_os = "linux")]
+use wry::WebViewBuilderExtUnix;
 #[cfg(target_os = "windows")]
 use wry::WebViewBuilderExtWindows;
 
@@ -113,7 +117,15 @@ impl ActionWindow {
         platform::style_utility_window(&window, is_dark);
 
         let ipc_proxy = proxy.clone();
-        let builder = WebViewBuilder::new_with_web_context(web_context)
+        #[cfg(target_os = "windows")]
+        let builder = WebViewBuilder::new_with_web_context(web_context);
+        #[cfg(not(target_os = "windows"))]
+        let builder = {
+            let _ = web_context;
+            WebViewBuilder::new().with_incognito(true)
+        };
+
+        let builder = builder
             .with_background_color(utility_bg(is_dark))
             .with_custom_protocol(UI_PROTOCOL.to_string(), |_id, req| {
                 handle_protocol_request(req)
@@ -141,6 +153,17 @@ impl ActionWindow {
             })
             .with_browser_accelerator_keys(false);
 
+        #[cfg(target_os = "linux")]
+        let webview = {
+            let vbox = window
+                .default_vbox()
+                .ok_or_else(|| "GTK default vbox missing for action panel window".to_string())?;
+            builder
+                .build_gtk(vbox)
+                .map_err(|e| format!("Failed to build action panel webview: {e}"))?
+        };
+
+        #[cfg(not(target_os = "linux"))]
         let webview = builder
             .build(&window)
             .map_err(|e| format!("Failed to build action panel webview: {e}"))?;

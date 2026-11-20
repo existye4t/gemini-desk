@@ -38,10 +38,49 @@ pub fn capture_foreground_selection(
     {
         windows_impl::capture(allow_clipboard_fallback, max_chars)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = allow_clipboard_fallback;
+        linux_impl::capture(max_chars)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Avoid prompting for broad macOS Accessibility keystroke synthesis;
+        // open the editable review sheet cleanly for explicit user paste.
+        let _ = (allow_clipboard_fallback, max_chars);
+        SelectionOutcome::Unavailable
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = (allow_clipboard_fallback, max_chars);
         SelectionOutcome::Unavailable
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use tracing::info;
+
+    use super::{CaptureSource, SelectionOutcome};
+    use crate::productivity::clipboard::{self, ClipboardText};
+
+    /// Reads the Wayland/X11 Primary Selection strictly on explicit user shortcut invocation.
+    /// Does not monitor selections in the background or synthesize keystrokes.
+    pub fn capture(max_chars: usize) -> SelectionOutcome {
+        match clipboard::read_primary_selection(max_chars) {
+            ClipboardText::Text { text, truncated } => {
+                info!(
+                    chars = text.chars().count(),
+                    "Captured selected text via Linux Primary Selection"
+                );
+                SelectionOutcome::Captured {
+                    text,
+                    source: CaptureSource::UiAutomation,
+                    truncated,
+                }
+            }
+            _ => SelectionOutcome::Unavailable,
+        }
     }
 }
 

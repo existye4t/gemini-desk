@@ -62,16 +62,288 @@ pub fn capture_region_headless(
     windows_impl::capture_rect_direct(x, y, width, height)
 }
 
-/// Launches the interactive full-virtual-screen region selection overlay on the current thread
+/// Launches the interactive screen region capture on the current thread
 /// (intended to be invoked on a short-lived worker thread so the main UI loop stays responsive).
+///
+/// - **Windows:** Native Win32 multi-monitor mixed-DPI virtual-screen overlay (pure in-memory PNG).
+/// - **Linux:** XDG Screenshot Portal (`org.freedesktop.portal.Screenshot`, `interactive = true`)
+///   for native KDE Plasma 6 / GNOME Wayland user-approved capture, with interactive `spectacle`
+///   / `grim`+`slurp` fallback. Never silently captures the screen.
+/// - **macOS:** Native `/usr/sbin/screencapture -i -x -t png` honoring macOS Screen Recording
+///   permission with interactive crosshair selection.
 pub fn run_interactive_region_capture() -> CaptureOutcome {
     #[cfg(target_os = "windows")]
     {
         windows_impl::run_interactive_overlay()
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_impl::run_portal_or_interactive_capture()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_impl::run_interactive_screencapture()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         CaptureOutcome::Error("Interactive screen capture is not yet implemented on this OS".into())
+    }
+}
+
+/// Decodes PNG dimensions (`width`, `height`) from in-memory PNG bytes.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+pub(crate) fn png_dimensions(png_bytes: &[u8]) -> Result<(u32, u32), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let reader = decoder
+        .read_info()
+        .map_err(|e| format!("Failed decoding captured PNG metadata: {e}"))?;
+    let info = reader.info();
+    if info.width == 0 || info.height == 0 {
+        return Err("Captured PNG had zero dimensions".into());
+    }
+    Ok((info.width, info.height))
+}
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use tracing::{info, warn};
+
+    use super::{CaptureOutcome, ScreenshotData, png_dimensions};
+
+    pub fn run_portal_or_interactive_capture() -> CaptureOutcome {
+        match capture_via_xdg_portal() {
+            Ok(outcome) => outcome,
+            Err(portal_err) => {
+                warn!(%portal_err, "XDG Screenshot portal unavailable; trying interactive desktop tool");
+                capture_via_interactive_tool(&portal_err)
+            }
+        }
+    }
+
+    fn capture_via_xdg_portal() -> Result<CaptureOutcome, String> {
+        use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+
+        let conn = zbus::blocking::Connection::session()
+            .map_err(|e| format!("D-Bus session unavailable: {e}"))?;
+        let portal = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Screenshot",
+        )
+        .map_err(|e| format!("Screenshot portal proxy failed: {e}"))?;
+
+        let sender = conn
+            .unique_name()
+            .map(|n| n.as_str().trim_start_matches(':').replace('.', "_"))
+            .unwrap_or_else(|| "geminidesk".to_string());
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let token = format!("gd_shot_{}_{nanos}", std::process::id());
+        let expected_path = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
+
+        let req_proxy = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.portal.Desktop",
+            expected_path.as_str(),
+            "org.freedesktop.portal.Request",
+        )
+        .map_err(|e| format!("Portal Request proxy failed: {e}"))?;
+        let mut responses = req_proxy
+            .receive_signal("Response")
+            .map_err(|e| format!("Portal Response subscribe failed: {e}"))?;
+
+        // `interactive = true` ensures explicit user region selection & permission (never silent).
+        let mut opts: HashMap<&str, Value<'_>> = HashMap::new();
+        opts.insert("handle_token", Value::from(token.as_str()));
+        opts.insert("modal", Value::from(true));
+        opts.insert("interactive", Value::from(true));
+
+        let _handle: OwnedObjectPath = portal
+            .call("Screenshot", &("", opts))
+            .map_err(|e| format!("Screenshot portal call failed: {e}"))?;
+
+        let msg = responses
+            .next()
+            .ok_or_else(|| "Screenshot portal closed without response".to_string())?;
+        let (code, results): (u32, HashMap<String, OwnedValue>) = msg
+            .body()
+            .deserialize()
+            .map_err(|e| format!("Failed decoding Screenshot portal response: {e}"))?;
+
+        if code == 1 {
+            return Ok(CaptureOutcome::Cancelled);
+        }
+        if code != 0 {
+            return Err(format!("Screenshot portal returned error code {code}"));
+        }
+
+        let uri: String = results
+            .get("uri")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .ok_or_else(|| "Screenshot portal response missing `uri`".to_string())?;
+        let parsed = url::Url::parse(&uri).map_err(|e| format!("Invalid portal URI: {e}"))?;
+        let path = parsed
+            .to_file_path()
+            .map_err(|()| "Portal URI was not a local file path".to_string())?;
+
+        let png_bytes =
+            fs::read(&path).map_err(|e| format!("Failed reading portal screenshot: {e}"))?;
+        let (width, height) = png_dimensions(&png_bytes)?;
+        info!(
+            width,
+            height,
+            bytes = png_bytes.len(),
+            "Captured screenshot via XDG Portal"
+        );
+
+        Ok(CaptureOutcome::Captured(ScreenshotData {
+            width,
+            height,
+            png_bytes,
+            bgra_pixels: Vec::new(),
+        }))
+    }
+
+    fn temp_capture_path() -> PathBuf {
+        let base = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        base.join(format!(
+            "geminidesk-shot-{}-{nanos}.png",
+            std::process::id()
+        ))
+    }
+
+    fn capture_via_interactive_tool(portal_err: &str) -> CaptureOutcome {
+        let tmp = temp_capture_path();
+
+        // 1. KDE Spectacle interactive region capture (`-r` region, `-b` background, `-n` no notify)
+        if let Ok(status) = Command::new("spectacle")
+            .args(["-b", "-r", "-n", "-o"])
+            .arg(&tmp)
+            .status()
+        {
+            return read_and_cleanup_tmp(&tmp, status.success());
+        }
+
+        // 2. wlroots interactive region capture (`slurp` + `grim`)
+        if let Ok(slurp_out) = Command::new("slurp").output() {
+            if !slurp_out.status.success() {
+                return CaptureOutcome::Cancelled;
+            }
+            let geom = String::from_utf8_lossy(&slurp_out.stdout)
+                .trim()
+                .to_string();
+            if !geom.is_empty()
+                && let Ok(status) = Command::new("grim").args(["-g", &geom]).arg(&tmp).status()
+            {
+                return read_and_cleanup_tmp(&tmp, status.success());
+            }
+        }
+
+        CaptureOutcome::Error(format!(
+            "No interactive screenshot portal or tool available ({portal_err}). Install `xdg-desktop-portal-kde` (KDE) or `xdg-desktop-portal-gtk` (GNOME)."
+        ))
+    }
+
+    fn read_and_cleanup_tmp(path: &PathBuf, ok: bool) -> CaptureOutcome {
+        if !ok || !path.exists() {
+            let _ = fs::remove_file(path);
+            return CaptureOutcome::Cancelled;
+        }
+        let res = fs::read(path);
+        let _ = fs::remove_file(path);
+        match res {
+            Ok(png_bytes) if !png_bytes.is_empty() => match png_dimensions(&png_bytes) {
+                Ok((width, height)) => CaptureOutcome::Captured(ScreenshotData {
+                    width,
+                    height,
+                    png_bytes,
+                    bgra_pixels: Vec::new(),
+                }),
+                Err(e) => CaptureOutcome::Error(e),
+            },
+            _ => CaptureOutcome::Cancelled,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos_impl {
+    use std::fs;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use tracing::info;
+
+    use super::{CaptureOutcome, ScreenshotData, png_dimensions};
+
+    /// Runs macOS's native interactive region capture (`/usr/sbin/screencapture -i -x -t png`).
+    /// macOS automatically enforces Screen Recording permissions and allows `Esc` cancellation.
+    pub fn run_interactive_screencapture() -> CaptureOutcome {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp = std::env::temp_dir().join(format!(
+            "geminidesk-shot-{}-{nanos}.png",
+            std::process::id()
+        ));
+
+        let status = match Command::new("/usr/sbin/screencapture")
+            .args(["-i", "-x", "-t", "png"])
+            .arg(&tmp)
+            .status()
+        {
+            Ok(s) => s,
+            Err(err) => {
+                return CaptureOutcome::Error(format!(
+                    "Failed to launch macOS screencapture: {err}"
+                ));
+            }
+        };
+
+        if !status.success() || !tmp.exists() {
+            let _ = fs::remove_file(&tmp);
+            return CaptureOutcome::Cancelled;
+        }
+
+        let bytes = fs::read(&tmp);
+        let _ = fs::remove_file(&tmp);
+
+        match bytes {
+            Ok(png_bytes) if !png_bytes.is_empty() => match png_dimensions(&png_bytes) {
+                Ok((width, height)) => {
+                    info!(
+                        width,
+                        height,
+                        bytes = png_bytes.len(),
+                        "Captured macOS screenshot"
+                    );
+                    CaptureOutcome::Captured(ScreenshotData {
+                        width,
+                        height,
+                        png_bytes,
+                        bgra_pixels: Vec::new(),
+                    })
+                }
+                Err(err) => CaptureOutcome::Error(err),
+            },
+            _ => CaptureOutcome::Cancelled,
+        }
     }
 }
 
@@ -667,7 +939,8 @@ mod tests {
         // PNG magic header
         assert_eq!(&png_bytes[..8], b"\x89PNG\r\n\x1a\n");
 
-        // Verify decoding back via `png` crate
+        // Verify decoding back via `png` crate & shared `png_dimensions` helper
+        assert_eq!(png_dimensions(&png_bytes).expect("png dims"), (2, 2));
         let decoder = png::Decoder::new(std::io::Cursor::new(&png_bytes));
         let reader = decoder.read_info().expect("read png header");
         assert_eq!(reader.info().width, 2);

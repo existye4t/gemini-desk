@@ -3,8 +3,10 @@ use std::str::FromStr;
 
 use global_hotkey::{GlobalHotKeyManager, hotkey::HotKey};
 use serde::Serialize;
+use tao::event_loop::EventLoopProxy;
 use tracing::{info, warn};
 
+use crate::app::AppEvent;
 use crate::config::AppConfig;
 
 /// Actions triggered by registered global hotkeys.
@@ -37,19 +39,49 @@ pub struct HotkeyStatus {
 }
 
 /// Manages global keyboard shortcuts with graceful OS conflict handling and live updates.
+///
+/// - **Windows / macOS / Linux X11:** Uses native OS global hotkeys via `global-hotkey`.
+/// - **Linux Wayland (KDE Plasma 6 / Hyprland):** Uses the XDG `GlobalShortcuts` D-Bus portal,
+///   with clear fallback instructions for compositors without portal support (e.g., GNOME Wayland).
 pub struct HotkeyController {
     manager: Option<GlobalHotKeyManager>,
     registered: HashMap<u32, (HotkeyAction, HotKey)>,
     status: HotkeyStatus,
+    #[cfg(target_os = "linux")]
+    portal_session: Option<crate::platform::linux::PortalShortcutsSession>,
+    #[cfg(target_os = "linux")]
+    wayland_mode: bool,
+    #[cfg(target_os = "linux")]
+    proxy: Option<EventLoopProxy<AppEvent>>,
 }
 
 impl HotkeyController {
-    pub fn new() -> Self {
-        let manager = match GlobalHotKeyManager::new() {
-            Ok(mgr) => Some(mgr),
-            Err(err) => {
-                warn!(?err, "GlobalHotKeyManager unavailable in this session");
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        #[cfg(target_os = "linux")]
+        let wayland_mode = crate::platform::linux::is_wayland_session();
+        #[cfg(not(target_os = "linux"))]
+        let _ = &proxy;
+
+        let manager = {
+            #[cfg(target_os = "linux")]
+            if wayland_mode {
                 None
+            } else {
+                match GlobalHotKeyManager::new() {
+                    Ok(mgr) => Some(mgr),
+                    Err(err) => {
+                        warn!(?err, "GlobalHotKeyManager unavailable in this X11 session");
+                        None
+                    }
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            match GlobalHotKeyManager::new() {
+                Ok(mgr) => Some(mgr),
+                Err(err) => {
+                    warn!(?err, "GlobalHotKeyManager unavailable in this session");
+                    None
+                }
             }
         };
 
@@ -57,6 +89,12 @@ impl HotkeyController {
             manager,
             registered: HashMap::new(),
             status: HotkeyStatus::default(),
+            #[cfg(target_os = "linux")]
+            portal_session: None,
+            #[cfg(target_os = "linux")]
+            wayland_mode,
+            #[cfg(target_os = "linux")]
+            proxy: Some(proxy),
         }
     }
 
@@ -95,6 +133,18 @@ impl HotkeyController {
     /// registered when their corresponding opt-in feature toggle is enabled.
     pub fn apply_from_config(&mut self, cfg: &AppConfig) -> HotkeyStatus {
         self.unregister_all();
+
+        #[cfg(target_os = "linux")]
+        if self.wayland_mode {
+            self.portal_session = None;
+            if let Some(proxy) = self.proxy.clone() {
+                let (session, status) =
+                    crate::platform::linux::PortalShortcutsSession::try_start(cfg, proxy);
+                self.portal_session = session;
+                self.status = status.clone();
+                return status;
+            }
+        }
 
         let quick_chat = self.register_one(
             HotkeyAction::ToggleQuickChat,

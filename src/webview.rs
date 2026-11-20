@@ -16,6 +16,16 @@ use tao::platform::windows::WindowExtWindows;
 #[cfg(target_os = "windows")]
 use wry::{MemoryUsageLevel, WebViewBuilderExtWindows, WebViewExtWindows};
 
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
+#[cfg(target_os = "linux")]
+use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+
+#[cfg(target_os = "macos")]
+use tao::platform::macos::WindowExtMacOS;
+#[cfg(target_os = "macos")]
+use wry::WebViewExtMacOS;
+
 use crate::app::AppEvent;
 use crate::config::ThemePreference;
 use crate::navigation::{
@@ -150,6 +160,22 @@ impl WebViewEngine {
             })
             .with_document_title_changed_handler(move |title| {
                 let _ = title_proxy.send_event(AppEvent::DocumentTitleChanged(title));
+            })
+            .with_download_started_handler(|uri, suggested_path| {
+                let safe_url = redact_url_for_log(&uri);
+                if let Some(dirs) = directories::UserDirs::new()
+                    && let Some(download_dir) = dirs.download_dir()
+                {
+                    let filename = suggested_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(sanitize_download_filename)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "gemini-download".to_string());
+                    *suggested_path = download_dir.join(filename);
+                }
+                info!(url = %safe_url, dest = %suggested_path.display(), "Starting Gemini download");
+                true
             });
 
         #[cfg(target_os = "windows")]
@@ -160,6 +186,15 @@ impl WebViewEngine {
         #[cfg(not(target_os = "windows"))]
         let _ = theme_pref;
 
+        #[cfg(target_os = "linux")]
+        let webview = {
+            let vbox = window
+                .default_vbox()
+                .ok_or_else(|| wry::Error::UnsupportedWindowHandle)?;
+            builder.build_gtk(vbox)?
+        };
+
+        #[cfg(not(target_os = "linux"))]
         let webview = builder.build(window)?;
 
         #[cfg(target_os = "windows")]
@@ -168,7 +203,13 @@ impl WebViewEngine {
             install_windows_accelerators(&webview, active_host_mode, proxy);
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        {
+            apply_webkitgtk_settings(&webview);
+            let _ = (active_host_mode, proxy);
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let _ = (active_host_mode, proxy);
 
         Ok(Self {
@@ -187,7 +228,22 @@ impl WebViewEngine {
             self.webview.reparent(target_window.hwnd())?;
             self.sync_bounds_to_window(target_window);
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(vbox) = target_window.default_vbox() {
+                self.webview.reparent(vbox)?;
+            }
+            self.sync_bounds_to_window(target_window);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let ns_win = target_window.ns_window() as *mut objc2_app_kit::NSWindow;
+            if !ns_win.is_null() {
+                self.webview.reparent(ns_win)?;
+            }
+            self.sync_bounds_to_window(target_window);
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
             let _ = target_window;
         }
@@ -692,6 +748,42 @@ fn install_windows_accelerators(
     if let Err(err) = unsafe { controller.add_AcceleratorKeyPressed(&handler, &mut token) } {
         warn!(?err, "Failed to install WebView2 accelerator key handler");
     }
+}
+
+#[cfg(target_os = "linux")]
+fn apply_webkitgtk_settings(webview: &WebView) {
+    use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
+
+    let wk = webview.webview();
+    if let Some(settings) = wk.settings() {
+        // Enable media streams & smooth scrolling for genuine Gemini features (e.g. voice input).
+        // Never spoof User-Agent or bypass Google's authentication policies.
+        settings.set_enable_media_stream(true);
+        settings.set_enable_mediasource(true);
+        settings.set_javascript_can_access_clipboard(true);
+        settings.set_enable_smooth_scrolling(true);
+        settings.set_enable_developer_extras(cfg!(debug_assertions));
+
+        let hw_policy = if std::env::var_os("GEMINIDESK_SOFTWARE_RENDER").is_some() {
+            HardwareAccelerationPolicy::Never
+        } else {
+            HardwareAccelerationPolicy::OnDemand
+        };
+        settings.set_hardware_acceleration_policy(hw_policy);
+    }
+}
+
+/// Strips path separators and traversal tokens from remote download filenames.
+fn sanitize_download_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            _ => c,
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .trim()
+        .to_string()
 }
 
 pub fn runtime_version_string() -> String {
