@@ -14,6 +14,7 @@ mod productivity;
 mod settings_window;
 mod tray;
 mod ui_assets;
+mod updater;
 mod webview;
 
 use tracing::error;

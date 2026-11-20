@@ -191,6 +191,11 @@ pub struct AppConfig {
     pub reduce_memory_when_hidden: bool,
     #[serde(default = "default_idle_suspend_secs")]
     pub efficiency_suspend_delay_secs: u32,
+
+    // --- Software Updates (v0.4.0, user-controlled — never silently installs major upgrades) ---
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
+    pub auto_download_updates: bool,
 }
 
 impl Default for AppConfig {
@@ -229,6 +234,9 @@ impl Default for AppConfig {
             performance_mode: PerformanceMode::Balanced,
             reduce_memory_when_hidden: true,
             efficiency_suspend_delay_secs: default_idle_suspend_secs(),
+
+            auto_check_updates: true,
+            auto_download_updates: false,
         }
     }
 }
@@ -273,6 +281,7 @@ pub struct AppState {
 pub struct AppPaths {
     pub config_dir: PathBuf,
     pub webview_data_dir: PathBuf,
+    pub updates_dir: PathBuf,
 }
 
 impl AppPaths {
@@ -280,21 +289,25 @@ impl AppPaths {
         if let Some(proj) = ProjectDirs::from("dev", "geminidesk", "GeminiDesk") {
             let config_dir = proj.config_dir().to_path_buf();
             let webview_data_dir = proj.data_local_dir().join("webview");
+            let updates_dir = proj.data_local_dir().join("updates");
             let _ = fs::create_dir_all(&config_dir);
             let _ = fs::create_dir_all(&webview_data_dir);
             Self {
                 config_dir,
                 webview_data_dir,
+                updates_dir,
             }
         } else {
             let base = PathBuf::from(".geminidesk-data");
             let config_dir = base.join("config");
             let webview_data_dir = base.join("webview");
+            let updates_dir = base.join("updates");
             let _ = fs::create_dir_all(&config_dir);
             let _ = fs::create_dir_all(&webview_data_dir);
             Self {
                 config_dir,
                 webview_data_dir,
+                updates_dir,
             }
         }
     }
@@ -472,6 +485,8 @@ mod tests {
             performance_mode: PerformanceMode::Efficiency,
             reduce_memory_when_hidden: true,
             efficiency_suspend_delay_secs: 45,
+            auto_check_updates: false,
+            auto_download_updates: true,
         };
         cfg.sanitize();
 

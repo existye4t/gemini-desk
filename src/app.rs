@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -5,8 +6,9 @@ use std::time::{Duration, Instant};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use muda::MenuEvent;
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use tao::event::{Event, WindowEvent};
+use tao::event::{ElementState, Event, KeyEvent, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopWindowTarget};
+use tao::keyboard::Key;
 use tao::window::{Window, WindowBuilder};
 use tracing::{error, info, warn};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -31,6 +33,7 @@ use crate::tray::{
     MENU_CAPTURE_SCREENSHOT, MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT,
     MENU_OPEN_GEMINI, MENU_QUICK_CHAT, MENU_QUIT, MENU_SETTINGS, TrayController,
 };
+use crate::updater::{self, UpdateStatus, UpdaterConfig, VerifiedUpdateOffer};
 use crate::webview::{
     HOST_COMPANION, HOST_MAIN, HOST_QUICK_CHAT, WebViewEngine, runtime_version_string,
 };
@@ -50,6 +53,7 @@ pub struct LaunchOptions {
     pub open_settings: bool,
     pub open_clipboard_actions: bool,
     pub open_ask_selection: bool,
+    pub open_screenshot: bool,
     pub preview_theme: Option<ThemePreference>,
 }
 
@@ -72,6 +76,8 @@ impl LaunchOptions {
                 opts.open_clipboard_actions = true;
             } else if arg == "--ask-selection" {
                 opts.open_ask_selection = true;
+            } else if arg == "--screenshot" {
+                opts.open_screenshot = true;
             } else if let Some(th) = arg.strip_prefix("--preview-theme=") {
                 opts.preview_theme = match th {
                     "dark" => Some(ThemePreference::Dark),
@@ -91,6 +97,12 @@ impl LaunchOptions {
             ActivationTarget::Companion
         } else if self.open_settings {
             ActivationTarget::Settings
+        } else if self.open_clipboard_actions {
+            ActivationTarget::ClipboardActions
+        } else if self.open_ask_selection {
+            ActivationTarget::AskSelection
+        } else if self.open_screenshot {
+            ActivationTarget::Screenshot
         } else {
             ActivationTarget::MainWindow
         }
@@ -115,8 +127,15 @@ pub enum AppEvent {
     ScreenshotCaptured(CaptureOutcome),
     InvokeClipboardActions,
     EvaluateIdleSuspend(u64),
-    SafeSuspendResult { generation: u64, safe: bool },
+    SafeSuspendResult {
+        generation: u64,
+        safe: bool,
+    },
     HotkeyPressed(u32),
+    #[allow(dead_code)]
+    PortalHotkeyActivated(HotkeyAction),
+    UpdateCheckFinished(Result<Option<VerifiedUpdateOffer>, String>),
+    UpdateDownloadFinished(Result<PathBuf, String>),
     TrayMenu(String),
     TrayLeftClick,
     DocumentTitleChanged(String),
@@ -149,6 +168,10 @@ struct DesktopApp {
     settings_window: Option<SettingsWindow>,
     action_window: Option<ActionWindow>,
     perf_sampler: PerformanceSampler,
+    updater_cfg: UpdaterConfig,
+    update_status: UpdateStatus,
+    pending_offer: Option<VerifiedUpdateOffer>,
+    verified_download_path: Option<PathBuf>,
     effective_dark: bool,
     last_main_geometry: Option<WindowGeometry>,
     last_companion_geometry: Option<WindowGeometry>,
@@ -471,8 +494,72 @@ impl DesktopApp {
                 self.effective_dark,
                 self.paths.webview_data_dir.display().to_string(),
                 cache_bytes,
+                self.update_status.clone(),
                 toast,
             );
+        }
+    }
+
+    fn set_update_status(&mut self, status: UpdateStatus) {
+        self.update_status = status.clone();
+        if let Some(settings) = &self.settings_window {
+            settings.push_update_status(&status);
+        }
+    }
+
+    fn start_update_check(&mut self) {
+        if !self.updater_cfg.is_signing_configured() {
+            self.set_update_status(UpdateStatus::NotConfigured {
+                message: "Automatic updates require an official signed release build (Ed25519 verifying key not embedded in this local build).".into(),
+            });
+            return;
+        }
+        self.set_update_status(UpdateStatus::Checking);
+        let cfg = self.updater_cfg.clone();
+        let proxy = self.proxy.clone();
+        std::thread::Builder::new()
+            .name("geminidesk-update-check".into())
+            .spawn(move || {
+                let res = updater::check_for_update(&cfg);
+                let _ = proxy.send_event(AppEvent::UpdateCheckFinished(res));
+            })
+            .ok();
+    }
+
+    fn start_update_download(&mut self) {
+        let Some(offer) = self.pending_offer.clone() else {
+            return;
+        };
+        self.set_update_status(UpdateStatus::Downloading {
+            version: offer.version.clone(),
+            downloaded_bytes: 0,
+            total_bytes: offer.artifact.size,
+        });
+        let cfg = self.updater_cfg.clone();
+        let proxy = self.proxy.clone();
+        std::thread::Builder::new()
+            .name("geminidesk-update-download".into())
+            .spawn(move || {
+                let res = updater::download_and_verify_artifact(&offer, &cfg);
+                let _ = proxy.send_event(AppEvent::UpdateDownloadFinished(res));
+            })
+            .ok();
+    }
+
+    fn dispatch_hotkey_action(&mut self, action: HotkeyAction) {
+        match action {
+            HotkeyAction::ToggleQuickChat => self.toggle_quick_chat(),
+            HotkeyAction::ShowFullWindow => self.show_main_window(),
+            HotkeyAction::ToggleCompanion => self.toggle_companion(),
+            HotkeyAction::AskSelection => {
+                let _ = self.proxy.send_event(AppEvent::InvokeAskSelection);
+            }
+            HotkeyAction::CaptureScreenshot => {
+                let _ = self.proxy.send_event(AppEvent::InvokeScreenshot);
+            }
+            HotkeyAction::ClipboardActions => {
+                let _ = self.proxy.send_event(AppEvent::InvokeClipboardActions);
+            }
         }
     }
 
@@ -683,13 +770,14 @@ impl DesktopApp {
 pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     let startup_clock = Instant::now();
 
-    let Some(_instance_guard) = platform::acquire_single_instance(options.activation_target())
+    let Some(mut _instance_guard) = platform::acquire_single_instance(options.activation_target())
     else {
         info!("Existing GeminiDesk instance signaled; exiting secondary process");
         return Ok(());
     };
 
     let paths = AppPaths::resolve();
+    updater::cleanup_stale_partial_downloads(&paths.updates_dir);
     let mut cfg = load_config(&paths.config_file());
     cfg.launch_at_startup = platform::is_launch_at_startup_enabled();
     let state = load_state(&paths.state_file());
@@ -698,14 +786,26 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     info!(
         version = env!("CARGO_PKG_VERSION"),
+        platform = %platform::platform_runtime_label(),
         data_dir = %paths.webview_data_dir.display(),
         dark = effective_dark,
         perf_mode = ?cfg.performance_mode,
         "Starting GeminiDesk"
     );
 
-    let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+    let mut el_builder = EventLoopBuilder::<AppEvent>::with_user_event();
+    #[cfg(target_os = "linux")]
+    {
+        use tao::platform::unix::EventLoopBuilderExtUnix;
+        el_builder.with_app_id(platform::linux::LINUX_APP_ID);
+    }
+    let event_loop = el_builder.build();
     let proxy = event_loop.create_proxy();
+
+    _instance_guard.start_activation_listener(proxy.clone());
+
+    #[cfg(target_os = "macos")]
+    let _macos_menu_bar = platform::macos::install_app_menu();
 
     // Zero-polling push-based OS callbacks.
     {
@@ -785,6 +885,11 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         use tao::platform::windows::WindowBuilderExtWindows;
         quick_wb = quick_wb.with_skip_taskbar(true);
     }
+    #[cfg(target_os = "linux")]
+    {
+        use tao::platform::unix::WindowBuilderExtUnix;
+        quick_wb = quick_wb.with_skip_taskbar(true);
+    }
     let quick_chat_window = quick_wb.build(&event_loop)?;
 
     // 3. Persistent Floating Companion Window (pre-created hidden HWND -> shares single WebView)
@@ -855,8 +960,14 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mut hotkeys = HotkeyController::new();
+    let mut hotkeys = HotkeyController::new(proxy.clone());
     hotkeys.apply_from_config(&cfg);
+
+    let updater_cfg = UpdaterConfig::for_current_build(paths.updates_dir.clone());
+    let initial_update_status = UpdateStatus::Idle {
+        configured: updater_cfg.is_signing_configured(),
+        last_checked_unix: None,
+    };
 
     let mut app = DesktopApp {
         paths,
@@ -877,6 +988,10 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         settings_window: None,
         action_window: None,
         perf_sampler: PerformanceSampler::new(),
+        updater_cfg,
+        update_status: initial_update_status,
+        pending_offer: None,
+        verified_download_path: None,
         effective_dark,
         last_main_geometry,
         last_companion_geometry,
@@ -884,6 +999,20 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         first_title_logged: false,
         proxy: proxy.clone(),
     };
+
+    // Optional one-shot non-polling startup update check (only when Ed25519 signing is configured).
+    if app.config.auto_check_updates && app.updater_cfg.is_signing_configured() {
+        let ucfg = app.updater_cfg.clone();
+        let uproxy = proxy.clone();
+        std::thread::Builder::new()
+            .name("geminidesk-startup-update".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs(15));
+                let res = updater::check_for_update(&ucfg);
+                let _ = uproxy.send_event(AppEvent::UpdateCheckFinished(res));
+            })
+            .ok();
+    }
 
     // 6. Initial window presentation
     if options.start_minimized {
@@ -925,6 +1054,9 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
     if options.open_ask_selection {
         let _ = proxy.send_event(AppEvent::InvokeAskSelection);
+    }
+    if options.open_screenshot {
+        let _ = proxy.send_event(AppEvent::InvokeScreenshot);
     }
 
     let mut guard = Some(_instance_guard);
@@ -979,6 +1111,35 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     SettingsIpcMessage::OpenProfileFolder => {
                         if let Err(err) = open::that(&app.paths.webview_data_dir) {
                             warn!(?err, "Failed to open profile directory");
+                        }
+                    }
+                    SettingsIpcMessage::CheckForUpdates => {
+                        app.start_update_check();
+                    }
+                    SettingsIpcMessage::DownloadUpdate => {
+                        app.start_update_download();
+                    }
+                    SettingsIpcMessage::InstallUpdate => {
+                        if let (Some(offer), Some(path)) = (
+                            app.pending_offer.clone(),
+                            app.verified_download_path.clone(),
+                        ) {
+                            match updater::launch_verified_installer(
+                                &path,
+                                &offer.artifact.sha256,
+                                offer.artifact.size,
+                                offer.artifact.kind,
+                            ) {
+                                Ok(should_exit) => {
+                                    if should_exit {
+                                        let _ = app.proxy.send_event(AppEvent::Quit);
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!(%err, "Verified update install handoff failed");
+                                    app.set_update_status(UpdateStatus::Error { message: err });
+                                }
+                            }
                         }
                     }
                     SettingsIpcMessage::Close => {
@@ -1137,20 +1298,61 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::SafeSuspendResult { generation, safe } => {
                     app.handle_safe_suspend_result(generation, safe);
                 }
-                AppEvent::HotkeyPressed(id) => match app.hotkeys.action_for_id(id) {
-                    Some(HotkeyAction::ToggleQuickChat) => app.toggle_quick_chat(),
-                    Some(HotkeyAction::ShowFullWindow) => app.show_main_window(),
-                    Some(HotkeyAction::ToggleCompanion) => app.toggle_companion(),
-                    Some(HotkeyAction::AskSelection) => {
-                        let _ = app.proxy.send_event(AppEvent::InvokeAskSelection);
+                AppEvent::HotkeyPressed(id) => {
+                    if let Some(action) = app.hotkeys.action_for_id(id) {
+                        app.dispatch_hotkey_action(action);
                     }
-                    Some(HotkeyAction::CaptureScreenshot) => {
-                        let _ = app.proxy.send_event(AppEvent::InvokeScreenshot);
+                }
+                AppEvent::PortalHotkeyActivated(action) => {
+                    app.dispatch_hotkey_action(action);
+                }
+                AppEvent::UpdateCheckFinished(result) => match result {
+                    Ok(Some(offer)) => {
+                        let status = UpdateStatus::Available {
+                            current_version: app.updater_cfg.current_version.clone(),
+                            latest_version: offer.version.clone(),
+                            pub_date: offer.pub_date.clone(),
+                            release_notes: offer.release_notes.clone(),
+                            artifact_size: offer.artifact.size,
+                            artifact_kind: offer.artifact.kind,
+                        };
+                        app.pending_offer = Some(offer);
+                        app.verified_download_path = None;
+                        app.set_update_status(status);
+                        if app.config.auto_download_updates {
+                            app.start_update_download();
+                        }
                     }
-                    Some(HotkeyAction::ClipboardActions) => {
-                        let _ = app.proxy.send_event(AppEvent::InvokeClipboardActions);
+                    Ok(None) => {
+                        app.pending_offer = None;
+                        app.set_update_status(UpdateStatus::UpToDate {
+                            current_version: app.updater_cfg.current_version.clone(),
+                            checked_at_unix: updater::now_unix(),
+                        });
                     }
-                    None => {}
+                    Err(message) => {
+                        app.set_update_status(UpdateStatus::Error { message });
+                    }
+                },
+                AppEvent::UpdateDownloadFinished(result) => match result {
+                    Ok(path) => {
+                        app.verified_download_path = Some(path.clone());
+                        if let Some(offer) = &app.pending_offer {
+                            let sha_prefix: String =
+                                offer.artifact.sha256.chars().take(12).collect();
+                            app.set_update_status(UpdateStatus::ReadyToInstall {
+                                version: offer.version.clone(),
+                                pub_date: offer.pub_date.clone(),
+                                release_notes: offer.release_notes.clone(),
+                                verified_path: path.display().to_string(),
+                                sha256_prefix: sha_prefix,
+                                artifact_kind: offer.artifact.kind,
+                            });
+                        }
+                    }
+                    Err(message) => {
+                        app.set_update_status(UpdateStatus::Error { message });
+                    }
                 },
                 AppEvent::TrayMenu(id) => match id.as_str() {
                     MENU_OPEN_GEMINI => app.show_main_window(),
@@ -1251,6 +1453,15 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 } else if window_id == app.quick_chat_window.id() {
                     match win_event {
                         WindowEvent::CloseRequested => app.hide_quick_chat(),
+                        WindowEvent::KeyboardInput {
+                            event:
+                                KeyEvent {
+                                    logical_key: Key::Escape,
+                                    state: ElementState::Pressed,
+                                    ..
+                                },
+                            ..
+                        } => app.hide_quick_chat(),
                         WindowEvent::Focused(false)
                             if app.config.quick_chat_hide_on_blur
                                 && app.quick_chat_window.is_visible()
@@ -1303,6 +1514,13 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 {
                     app.action_window = None;
                 }
+            }
+            Event::Reopen {
+                has_visible_windows: false,
+                ..
+            } => {
+                // macOS Dock icon click restores the Main Window cleanly.
+                app.show_main_window();
             }
             _ => {}
         }

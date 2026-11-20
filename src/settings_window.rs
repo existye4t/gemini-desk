@@ -5,6 +5,10 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use tracing::warn;
 use wry::{WebContext, WebView, WebViewBuilder};
 
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
+#[cfg(target_os = "linux")]
+use wry::WebViewBuilderExtUnix;
 #[cfg(target_os = "windows")]
 use wry::WebViewBuilderExtWindows;
 
@@ -15,6 +19,7 @@ use crate::icon;
 use crate::performance::PerformanceMetrics;
 use crate::platform;
 use crate::ui_assets::{UI_PROTOCOL, handle_protocol_request, is_local_ui_url, page_url};
+use crate::updater::UpdateStatus;
 use crate::webview::runtime_version_string;
 
 /// Typed IPC messages received strictly from the local, isolated Settings WebView.
@@ -27,6 +32,9 @@ pub enum SettingsIpcMessage {
     RequestMetrics,
     ClearCache,
     OpenProfileFolder,
+    CheckForUpdates,
+    DownloadUpdate,
+    InstallUpdate,
     Close,
 }
 
@@ -37,9 +45,11 @@ pub struct SettingsViewState {
     pub hotkeys: HotkeyStatus,
     pub effective_dark: bool,
     pub version: &'static str,
+    pub platform_label: String,
     pub webview_version: String,
     pub profile_path: String,
     pub cache_size_bytes: u64,
+    pub update_status: UpdateStatus,
     pub initial_tab: Option<String>,
     pub toast: Option<String>,
 }
@@ -86,7 +96,15 @@ impl SettingsWindow {
         platform::style_utility_window(&window, is_dark);
 
         let ipc_proxy = proxy.clone();
-        let builder = WebViewBuilder::new_with_web_context(web_context)
+        #[cfg(target_os = "windows")]
+        let builder = WebViewBuilder::new_with_web_context(web_context);
+        #[cfg(not(target_os = "windows"))]
+        let builder = {
+            let _ = web_context;
+            WebViewBuilder::new().with_incognito(true)
+        };
+
+        let builder = builder
             .with_background_color(utility_bg_rgba(is_dark))
             .with_custom_protocol(UI_PROTOCOL.to_string(), |_id, req| {
                 handle_protocol_request(req)
@@ -114,6 +132,17 @@ impl SettingsWindow {
             })
             .with_browser_accelerator_keys(false);
 
+        #[cfg(target_os = "linux")]
+        let webview = {
+            let vbox = window
+                .default_vbox()
+                .ok_or_else(|| "GTK default vbox missing for settings window".to_string())?;
+            builder
+                .build_gtk(vbox)
+                .map_err(|e| format!("Failed to build settings webview: {e}"))?
+        };
+
+        #[cfg(not(target_os = "linux"))]
         let webview = builder
             .build(&window)
             .map_err(|e| format!("Failed to build settings webview: {e}"))?;
@@ -145,6 +174,7 @@ impl SettingsWindow {
         let _ = self.webview.set_background_color(utility_bg_rgba(is_dark));
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn push_state(
         &mut self,
         config: &AppConfig,
@@ -152,6 +182,7 @@ impl SettingsWindow {
         effective_dark: bool,
         profile_path: String,
         cache_size_bytes: u64,
+        update_status: UpdateStatus,
         toast: Option<String>,
     ) {
         let initial_tab = self.pending_tab.take();
@@ -160,9 +191,11 @@ impl SettingsWindow {
             hotkeys: hotkeys.clone(),
             effective_dark,
             version: env!("CARGO_PKG_VERSION"),
+            platform_label: platform::platform_runtime_label(),
             webview_version: runtime_version_string(),
             profile_path,
             cache_size_bytes,
+            update_status,
             initial_tab,
             toast,
         };
@@ -170,6 +203,15 @@ impl SettingsWindow {
             let script = format!("window.__geminidesk_apply_state({json});");
             if let Err(err) = self.webview.evaluate_script(&script) {
                 warn!(?err, "Failed to push state to Settings UI");
+            }
+        }
+    }
+
+    pub fn push_update_status(&self, status: &UpdateStatus) {
+        if let Ok(json) = serde_json::to_string(status) {
+            let script = format!("window.__geminidesk_apply_update_status({json});");
+            if let Err(err) = self.webview.evaluate_script(&script) {
+                warn!(?err, "Failed to push update status to Settings UI");
             }
         }
     }

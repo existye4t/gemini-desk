@@ -471,10 +471,59 @@
   }
 
   .legal-note {
-    margin-top: 18px;
+    margin-top: 14px;
     font-size: 11.5px;
     color: var(--text-muted);
-    line-height: 1.55;
+    line-height: 1.5;
+  }
+
+  .update-box {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border-radius: var(--r-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .update-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .update-title {
+    font-size: 12.5px;
+    font-weight: 530;
+    color: var(--text);
+  }
+
+  .update-msg {
+    margin-top: 3px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+
+  .update-notes {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    background: var(--bg);
+    border: 1px solid var(--divider);
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    max-height: 92px;
+    overflow-y: auto;
+    line-height: 1.45;
+  }
+
+  .update-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
   }
 </style>
 </head>
@@ -968,11 +1017,44 @@
           </div>
         </div>
 
-        <div class="kv-row"><span class="kv-k">Version</span><span class="kv-v" id="about_version">0.3.1</span></div>
-        <div class="kv-row"><span class="kv-k">Architecture</span><span class="kv-v">Rust · tao · wry</span></div>
-        <div class="kv-row"><span class="kv-k">WebView2 Runtime</span><span class="kv-v" id="about_webview">—</span></div>
+        <div class="kv-row"><span class="kv-k">Version</span><span class="kv-v" id="about_version">0.4.0</span></div>
+        <div class="kv-row"><span class="kv-k">Platform</span><span class="kv-v" id="about_platform">—</span></div>
+        <div class="kv-row"><span class="kv-k">WebView Runtime</span><span class="kv-v" id="about_webview">—</span></div>
         <div class="kv-row"><span class="kv-k">Typography</span><span class="kv-v">Geist &amp; Geist Mono (SIL OFL 1.1)</span></div>
         <div class="kv-row"><span class="kv-k">License</span><span class="kv-v">MIT OR Apache-2.0</span></div>
+
+        <div class="group-label" style="margin-top:18px;">Software Updates</div>
+        <div class="update-box">
+          <div class="update-head">
+            <div style="min-width:0;">
+              <div class="update-title" id="update-title">Ed25519-Verified Updates</div>
+              <div class="update-msg" id="update-msg">Checks signed release metadata over HTTPS.</div>
+            </div>
+            <div class="update-actions">
+              <button class="gd-btn gd-btn-sm" type="button" id="btn-check-updates">Check for Updates</button>
+              <button class="gd-btn gd-btn-sm gd-btn-primary" type="button" id="btn-download-update" hidden>Download</button>
+              <button class="gd-btn gd-btn-sm gd-btn-primary" type="button" id="btn-install-update" hidden>Install &amp; Restart</button>
+            </div>
+          </div>
+          <div class="update-notes" id="update-notes" hidden></div>
+        </div>
+
+        <div class="rows" style="margin-top:10px;">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Check for updates automatically</div>
+              <div class="row-desc">Runs once after startup on signed release builds. Never polls continuously.</div>
+            </div>
+            <label class="gd-switch"><input type="checkbox" id="auto_check_updates" /><span class="gd-track"></span></label>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Download verified updates automatically</div>
+              <div class="row-desc">Verifies Ed25519 signature and SHA-256 hash; never installs without your consent.</div>
+            </div>
+            <label class="gd-switch"><input type="checkbox" id="auto_download_updates" /><span class="gd-track"></span></label>
+          </div>
+        </div>
 
         <div class="legal-note">
           GeminiDesk is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Google LLC. Google accounts, subscriptions, models, and conversation history remain entirely managed by Google.
@@ -1290,6 +1372,8 @@
       performance_mode: activePerf,
       reduce_memory_when_hidden: activePerf !== 'performance',
       efficiency_suspend_delay_secs: parseInt($('efficiency_suspend_delay_secs').value, 10) || 60,
+      auto_check_updates: $('auto_check_updates').checked,
+      auto_download_updates: $('auto_download_updates').checked,
     };
   }
 
@@ -1375,10 +1459,16 @@
 
     $('sidebar-ver').textContent = `v${state.version}`;
     $('about_version').textContent = state.version;
+    $('about_platform').textContent = state.platform_label || '—';
     $('about_webview').textContent = state.webview_version;
     $('m-runtime').textContent = state.webview_version;
     $('profile_path').textContent = state.profile_path;
     $('cache_size').textContent = formatBytes(state.cache_size_bytes);
+    $('auto_check_updates').checked = !!c.auto_check_updates;
+    $('auto_download_updates').checked = !!c.auto_download_updates;
+    if (state.update_status) {
+      window.__geminidesk_apply_update_status(state.update_status);
+    }
 
     if (state.initial_tab && state.initial_tab !== activeTab) {
       setTab(state.initial_tab);
@@ -1420,6 +1510,71 @@
     });
   };
 
+  window.__geminidesk_apply_update_status = function(st) {
+    const titleEl = $('update-title');
+    const msgEl = $('update-msg');
+    const notesEl = $('update-notes');
+    const btnCheck = $('btn-check-updates');
+    const btnDownload = $('btn-download-update');
+    const btnInstall = $('btn-install-update');
+
+    btnCheck.disabled = false;
+    btnCheck.hidden = false;
+    btnDownload.hidden = true;
+    btnInstall.hidden = true;
+    notesEl.hidden = true;
+
+    if (!st) return;
+    switch (st.status) {
+      case 'idle':
+        titleEl.textContent = st.configured ? 'Automatic Updates Ready' : 'Unsigned Local Build';
+        msgEl.textContent = st.configured
+          ? 'Signed release checks verify Ed25519 signatures and SHA-256 digests over HTTPS.'
+          : 'Updates are disabled in unsigned development builds. Official releases verify Ed25519 signatures.';
+        break;
+      case 'not_configured':
+        titleEl.textContent = 'Updates Disabled (Unsigned Build)';
+        msgEl.textContent = st.message;
+        break;
+      case 'checking':
+        titleEl.textContent = 'Checking for updates…';
+        msgEl.textContent = 'Verifying signed release metadata over HTTPS.';
+        btnCheck.disabled = true;
+        break;
+      case 'up_to_date':
+        titleEl.textContent = `Up to date (v${st.current_version})`;
+        msgEl.textContent = 'You are running the latest verified release.';
+        break;
+      case 'available':
+        titleEl.textContent = `Update available: v${st.latest_version}`;
+        msgEl.textContent = `Signed package (${formatBytes(st.artifact_size)}) verified via Ed25519. Settings and Google sign-in will be preserved.`;
+        if (st.release_notes) {
+          notesEl.textContent = st.release_notes;
+          notesEl.hidden = false;
+        }
+        btnDownload.hidden = false;
+        break;
+      case 'downloading':
+        titleEl.textContent = `Downloading v${st.version}…`;
+        msgEl.textContent = `Streaming verified payload (${formatBytes(st.total_bytes)}) and checking SHA-256…`;
+        btnCheck.disabled = true;
+        break;
+      case 'ready_to_install':
+        titleEl.textContent = `v${st.version} verified & ready`;
+        msgEl.textContent = `SHA-256 (${st.sha256_prefix}…) matched. Click Install & Restart when ready.`;
+        if (st.release_notes) {
+          notesEl.textContent = st.release_notes;
+          notesEl.hidden = false;
+        }
+        btnInstall.hidden = false;
+        break;
+      case 'error':
+        titleEl.textContent = 'Update check could not complete';
+        msgEl.textContent = st.message;
+        break;
+    }
+  };
+
   /* Immediate Save Bindings */
   for (const id of [
     'launch_at_startup', 'minimize_to_tray',
@@ -1428,9 +1583,14 @@
     'ask_selection_enabled', 'ask_selection_clipboard_fallback',
     'screenshot_enabled', 'screenshot_copy_to_clipboard',
     'clipboard_actions_enabled', 'clipboard_max_chars', 'efficiency_suspend_delay_secs',
+    'auto_check_updates', 'auto_download_updates',
   ]) {
     $(id).addEventListener('change', saveNow);
   }
+
+  $('btn-check-updates').addEventListener('click', () => post({ type: 'check_for_updates' }));
+  $('btn-download-update').addEventListener('click', () => post({ type: 'download_update' }));
+  $('btn-install-update').addEventListener('click', () => post({ type: 'install_update' }));
 
   $('companion_opacity').addEventListener('input', (e) => {
     $('companion_opacity_val').textContent = `${e.target.value}%`;
