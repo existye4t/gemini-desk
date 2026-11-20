@@ -19,6 +19,7 @@ pub struct ScreenshotData {
 /// Source description shown transparently in the Prompt Review UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum CaptureSource {
     UiAutomation,
     ClipboardFallback,

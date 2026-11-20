@@ -20,6 +20,7 @@ pub enum CaptureOutcome {
 }
 
 /// Encodes a top-down 32-bit BGRA buffer into lossless PNG bytes strictly in memory.
+#[allow(dead_code)]
 pub fn encode_bgra_to_png(bgra: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     let pixel_count = (width as usize).saturating_mul(height as usize);
     if width == 0 || height == 0 || bgra.len() < pixel_count * 4 {

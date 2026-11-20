@@ -81,13 +81,20 @@ fn query_portal_color_scheme() -> Option<bool> {
     )
     .ok()?;
 
-    // XDG Portal spec: color-scheme returns variant(variant(u32)):
+    // XDG Portal spec: ReadOne returns variant(u32); legacy Read returns variant(variant(u32)):
     // 0 = No preference, 1 = Prefer dark, 2 = Prefer light.
-    let outer: zbus::zvariant::OwnedValue = proxy
-        .call("Read", &("org.freedesktop.appearance", "color-scheme"))
+    let val: zbus::zvariant::OwnedValue = proxy
+        .call("ReadOne", &("org.freedesktop.appearance", "color-scheme"))
+        .or_else(|_| proxy.call("Read", &("org.freedesktop.appearance", "color-scheme")))
         .ok()?;
-    let inner: zbus::zvariant::OwnedValue = outer.try_into().ok()?;
-    let scheme: u32 = inner.try_into().ok()?;
+    let mut cur: &zbus::zvariant::Value<'_> = &val;
+    while let zbus::zvariant::Value::Value(inner) = cur {
+        cur = inner;
+    }
+    let scheme = match cur {
+        zbus::zvariant::Value::U32(n) => *n,
+        _ => return None,
+    };
     match scheme {
         1 => Some(true),
         2 => Some(false),

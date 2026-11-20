@@ -19,6 +19,7 @@
 use super::CaptureSource;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum SelectionOutcome {
     Captured {
         text: String,

@@ -114,8 +114,10 @@ impl LaunchOptions {
 pub enum AppEvent {
     ShowMainWindow,
     ToggleQuickChat,
+    #[allow(dead_code)]
     HideQuickChat,
     ToggleCompanion,
+    #[allow(dead_code)]
     ToggleCompanionAlwaysOnTop,
     NewChat,
     OpenSettings(Option<String>),

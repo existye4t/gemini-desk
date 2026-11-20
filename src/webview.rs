@@ -489,11 +489,11 @@ impl WebViewEngine {
 
     /// Calls `ICoreWebView2_3::TrySuspend` after `check_safe_to_suspend` confirms idle state.
     pub fn try_suspend(&self) {
-        if self.suspended.load(Ordering::Relaxed) {
-            return;
-        }
         #[cfg(target_os = "windows")]
         {
+            if self.suspended.load(Ordering::Relaxed) {
+                return;
+            }
             use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
             use webview2_com::TrySuspendCompletedHandler;
             use windows::core::Interface;
@@ -517,11 +517,11 @@ impl WebViewEngine {
 
     /// Resumes WebView2 immediately if suspended.
     pub fn resume_if_suspended(&self) {
-        if !self.suspended.swap(false, Ordering::Relaxed) {
-            return;
-        }
         #[cfg(target_os = "windows")]
         {
+            if !self.suspended.swap(false, Ordering::Relaxed) {
+                return;
+            }
             use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
             use windows::core::Interface;
 

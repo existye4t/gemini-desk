@@ -109,7 +109,7 @@ pub fn install_app_menu() -> Option<Menu> {
         MENU_SETTINGS,
         "Settings...",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::Comma)),
+        Some(Accelerator::new(Modifiers::META, Code::Comma)),
     ));
     let _ = app_menu.append(&PredefinedMenuItem::separator());
     let _ = app_menu.append(&PredefinedMenuItem::hide(None));
@@ -120,7 +120,7 @@ pub fn install_app_menu() -> Option<Menu> {
         MENU_QUIT,
         "Quit GeminiDesk",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyQ)),
+        Some(Accelerator::new(Modifiers::META, Code::KeyQ)),
     ));
 
     let edit_menu = Submenu::new("Edit", true);
@@ -155,7 +155,7 @@ pub fn install_app_menu() -> Option<Menu> {
         MENU_NEW_CHAT,
         "New Chat",
         true,
-        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyN)),
+        Some(Accelerator::new(Modifiers::META, Code::KeyN)),
     ));
     let _ = window_menu.append(&PredefinedMenuItem::separator());
     let _ = window_menu.append(&MenuItem::with_id(

@@ -6,6 +6,7 @@
 
 /// Result of reading plain text from the OS clipboard.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ClipboardText {
     Text { text: String, truncated: bool },
     Empty,
