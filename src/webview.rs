@@ -392,10 +392,7 @@ impl WebViewEngine {
         #[cfg(target_os = "windows")]
         {
             let wv = self.webview.webview();
-            if self.can_go_back() && unsafe { wv.GoBack() }.is_ok() {
-                return true;
-            }
-            false
+            self.can_go_back() && unsafe { wv.GoBack() }.is_ok()
         }
         #[cfg(target_os = "macos")]
         {
@@ -725,61 +722,60 @@ impl WebViewEngine {
     /// - Linux: clears WebKitGTK transient `MEMORY_CACHE` + trims host glibc arenas while keeping
     ///   cookies, sessions, and active conversations 100% intact.
     pub fn try_suspend(&self) {
-        if self.suspended.load(Ordering::Relaxed) {
-            return;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
-            use webview2_com::TrySuspendCompletedHandler;
-            use windows::core::Interface;
+        if !self.suspended.load(Ordering::Relaxed) {
+            #[cfg(target_os = "windows")]
+            {
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+                use webview2_com::TrySuspendCompletedHandler;
+                use windows::core::Interface;
 
-            let flag = Arc::clone(&self.suspended);
-            let wv = self.webview.webview();
-            if let Ok(wv3) = wv.cast::<ICoreWebView2_3>() {
-                let handler = TrySuspendCompletedHandler::create(Box::new(move |hr, is_succ| {
-                    if hr.is_ok() && is_succ {
-                        flag.store(true, Ordering::Relaxed);
-                        info!("WebView2 suspended cleanly in Efficiency mode");
+                let flag = Arc::clone(&self.suspended);
+                let wv = self.webview.webview();
+                if let Ok(wv3) = wv.cast::<ICoreWebView2_3>() {
+                    let handler =
+                        TrySuspendCompletedHandler::create(Box::new(move |hr, is_succ| {
+                            if hr.is_ok() && is_succ {
+                                flag.store(true, Ordering::Relaxed);
+                                info!("WebView2 suspended cleanly in Efficiency mode");
+                            }
+                            Ok(())
+                        }));
+                    if let Err(err) = unsafe { wv3.TrySuspend(&handler) } {
+                        warn!(?err, "WebView2 TrySuspend call failed");
                     }
-                    Ok(())
-                }));
-                if let Err(err) = unsafe { wv3.TrySuspend(&handler) } {
-                    warn!(?err, "WebView2 TrySuspend call failed");
                 }
             }
-        }
-        #[cfg(target_os = "linux")]
-        {
-            trim_webkitgtk_memory_cache(&self.webview);
-            crate::platform::trim_allocator();
-            self.suspended.store(true, Ordering::Relaxed);
-            info!("WebKitGTK idle memory cache trimmed cleanly in Efficiency mode");
+            #[cfg(target_os = "linux")]
+            {
+                trim_webkitgtk_memory_cache(&self.webview);
+                crate::platform::trim_allocator();
+                self.suspended.store(true, Ordering::Relaxed);
+                info!("WebKitGTK idle memory cache trimmed cleanly in Efficiency mode");
+            }
         }
     }
 
     /// Resumes WebView immediately if suspended or idle-trimmed.
     pub fn resume_if_suspended(&self) {
-        if !self.suspended.swap(false, Ordering::Relaxed) {
-            return;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
-            use windows::core::Interface;
+        if self.suspended.swap(false, Ordering::Relaxed) {
+            #[cfg(target_os = "windows")]
+            {
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+                use windows::core::Interface;
 
-            let wv = self.webview.webview();
-            if let Ok(wv3) = wv.cast::<ICoreWebView2_3>() {
-                if let Err(err) = unsafe { wv3.Resume() } {
-                    warn!(?err, "WebView2 Resume call failed");
-                } else {
-                    info!("WebView2 resumed from Efficiency suspension");
+                let wv = self.webview.webview();
+                if let Ok(wv3) = wv.cast::<ICoreWebView2_3>() {
+                    if let Err(err) = unsafe { wv3.Resume() } {
+                        warn!(?err, "WebView2 Resume call failed");
+                    } else {
+                        info!("WebView2 resumed from Efficiency suspension");
+                    }
                 }
             }
-        }
-        #[cfg(target_os = "linux")]
-        {
-            info!("WebKitGTK resumed from Efficiency idle state");
+            #[cfg(target_os = "linux")]
+            {
+                info!("WebKitGTK resumed from Efficiency idle state");
+            }
         }
     }
 

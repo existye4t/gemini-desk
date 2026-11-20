@@ -169,8 +169,11 @@ pub enum AppEvent {
         uri: String,
         error: String,
     },
+    #[allow(dead_code)]
     CancelAuthFlow,
+    #[allow(dead_code)]
     RetryAuthFlow,
+    #[allow(dead_code)]
     AuthNavigateBack,
     #[allow(dead_code)]
     AuthEscapePressed,
