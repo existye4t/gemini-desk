@@ -1,7 +1,7 @@
 /// Programmatically renders a clean, high-DPI anti-aliased RGBA icon for GeminiDesk.
 ///
-/// Uses an independent dark slate rounded-square badge with a crisp four-point star prism
-/// in cool cyan-to-indigo gradient so GeminiDesk has a refined, distinct desktop identity
+/// Uses an independent obsidian charcoal rounded-square badge with a crisp monochrome
+/// silver-white four-point prism star so GeminiDesk has a refined, distinct desktop identity
 /// without impersonating Google's official trademarked brand assets.
 pub fn render_app_icon_rgba(size: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (size * size * 4) as usize];
@@ -57,39 +57,37 @@ fn sd_rounded_box(px: f32, py: f32, b: f32, r: f32) -> f32 {
 
 fn sample_icon(u: f32, v: f32) -> (f32, f32, f32, f32) {
     // Outer rounded squircle container
-    let d_bg = sd_rounded_box(u, v, 0.92, 0.28);
+    let d_bg = sd_rounded_box(u, v, 0.90, 0.28);
     if d_bg > 0.0 {
         return (0.0, 0.0, 0.0, 0.0);
     }
 
-    // Subtle deep slate radial background (#171b24 -> #101218)
-    let rad = (u * u + v * v).sqrt().min(1.2);
-    let mut r = 0.11 - 0.03 * rad;
-    let mut g = 0.125 - 0.03 * rad;
-    let mut b = 0.165 - 0.03 * rad;
+    // Refined obsidian charcoal radial surface (#1C1C1F -> #0E0E10)
+    let rad = (u * u + v * v).sqrt().min(1.25);
+    let base = 0.115 - 0.032 * rad;
+    let mut r = base;
+    let mut g = base;
+    let mut b = base + 0.006;
 
-    // Subtle rim highlight along inner edge
-    if d_bg > -0.045 {
-        r += 0.07;
-        g += 0.09;
-        b += 0.14;
+    // Subtle hairline rim highlight along inner edge
+    if d_bg > -0.042 {
+        let rim = if v < 0.0 { 0.085 } else { 0.045 };
+        r += rim;
+        g += rim;
+        b += rim;
     }
 
-    // Crisp 4-point astroid/sparkle glyph: (|x|^p + |y|^p) <= R^p with p = 0.62
+    // Crisp monochrome silver-white 4-point astroid glyph: (|x|^p + |y|^p) <= R^p
     let star_val = u.abs().powf(0.62) + v.abs().powf(0.62);
-    let star_radius = 0.68f32.powf(0.62);
+    let star_radius = 0.66f32.powf(0.62);
     if star_val <= star_radius {
-        // Cool indigo-to-sky-blue diagonal gradient
         let t = ((u - v) * 0.5 + 0.5).clamp(0.0, 1.0);
-        let sr = 0.30 + 0.25 * t;
-        let sg = 0.56 + 0.30 * t;
-        let sb = 0.98;
-
-        // Subtle bright core
-        let core = (1.0 - (u.hypot(v) / 0.34)).clamp(0.0, 1.0);
-        r = (sr + core * 0.32).min(1.0);
-        g = (sg + core * 0.28).min(1.0);
-        b = (sb + core * 0.10).min(1.0);
+        let c = 0.86 + 0.11 * (1.0 - t);
+        let core = (1.0 - (u.hypot(v) / 0.36)).clamp(0.0, 1.0);
+        let vcol = (c + core * 0.08).min(1.0);
+        r = vcol;
+        g = vcol;
+        b = (vcol + 0.01).min(1.0);
     }
 
     (r, g, b, 1.0)

@@ -1,23 +1,32 @@
 [package]
 name = "gemini-desk"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "Lightweight, high-performance unofficial Rust desktop client for Google Gemini"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/geminidesk/geminidesk"
+homepage = "https://github.com/geminidesk/geminidesk"
+readme = "README.md"
+keywords = ["gemini", "desktop", "webview", "rust", "cross-platform"]
+categories = ["gui"]
 
 [dependencies]
 directories = "6.0"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
 global-hotkey = "0.10"
 muda = "0.21"
 open = "5.4"
 png = "0.18"
+semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 tao = "0.37"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tray-icon = "0.26"
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+ureq = { version = "3", default-features = false, features = ["native-tls", "json"] }
 url = "2.5"
 wry = "0.57"
 
@@ -44,9 +53,78 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+zbus = { version = "5", default-features = false, features = ["blocking-api"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSAppearance",
+    "NSColor",
+    "NSPasteboard",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+    "objc2-core-foundation",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSData",
+    "NSString",
+    "NSUserDefaults",
+] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "WKPreferences",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKWebsiteDataStore",
+] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
 opt-level = "s"
 strip = true
 panic = "abort"
+
+[package.metadata.deb]
+maintainer = "GeminiDesk Contributors"
+copyright = "2026, GeminiDesk Contributors"
+license-file = ["THIRD_PARTY_LICENSES.md", "0"]
+extended-description = """\
+Unofficial, ultra-lightweight desktop client for Google Gemini written in Rust. \
+Uses the native system WebKitGTK runtime with zero bundled Electron or Chromium."""
+depends = "$auto, libwebkit2gtk-4.1-0, libgtk-3-0, xdg-desktop-portal"
+recommends = "xdg-desktop-portal-kde | xdg-desktop-portal-gtk, wl-clipboard | xclip"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/gemini-desk", "usr/bin/gemini-desk", "755"],
+    ["packaging/linux/io.geminidesk.GeminiDesk.desktop", "usr/share/applications/io.geminidesk.GeminiDesk.desktop", "644"],
+    ["packaging/linux/io.geminidesk.GeminiDesk.metainfo.xml", "usr/share/metainfo/io.geminidesk.GeminiDesk.metainfo.xml", "644"],
+    ["assets/icons/geminidesk.svg", "usr/share/icons/hicolor/scalable/apps/io.geminidesk.GeminiDesk.svg", "644"],
+    ["assets/icons/geminidesk-256.png", "usr/share/icons/hicolor/256x256/apps/io.geminidesk.GeminiDesk.png", "644"],
+    ["THIRD_PARTY_LICENSES.md", "usr/share/doc/gemini-desk/THIRD_PARTY_LICENSES.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/gemini-desk", dest = "/usr/bin/gemini-desk", mode = "0755" },
+    { source = "packaging/linux/io.geminidesk.GeminiDesk.desktop", dest = "/usr/share/applications/io.geminidesk.GeminiDesk.desktop", mode = "0644" },
+    { source = "packaging/linux/io.geminidesk.GeminiDesk.metainfo.xml", dest = "/usr/share/metainfo/io.geminidesk.GeminiDesk.metainfo.xml", mode = "0644" },
+    { source = "assets/icons/geminidesk.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.geminidesk.GeminiDesk.svg", mode = "0644" },
+    { source = "assets/icons/geminidesk-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.geminidesk.GeminiDesk.png", mode = "0644" },
+]
+[package.metadata.generate-rpm.requires]
+webkit2gtk4.1 = "*"
+gtk3 = "*"
+xdg-desktop-portal = "*"
