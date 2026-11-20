@@ -61,6 +61,7 @@ impl WebViewEngine {
     ) -> wry::Result<Self> {
         let bg = background_rgba(is_dark);
         let title_proxy = proxy.clone();
+        let load_proxy = proxy.clone();
         let first_nav_logged = Arc::new(AtomicBool::new(false));
         let first_started_logged = Arc::new(AtomicBool::new(false));
         let first_finished_logged = Arc::new(AtomicBool::new(false));
@@ -94,6 +95,10 @@ impl WebViewEngine {
                         } else {
                             info!(state = "started", url = %safe_url, "Page load state changed");
                         }
+                        let _ = load_proxy.send_event(AppEvent::PageLoadStateChanged {
+                            finished: false,
+                            uri,
+                        });
                     }
                     PageLoadEvent::Finished => {
                         load_nav_state.store(false, Ordering::Relaxed);
@@ -106,6 +111,10 @@ impl WebViewEngine {
                         } else {
                             info!(state = "finished", url = %safe_url, "Page load state changed");
                         }
+                        let _ = load_proxy.send_event(AppEvent::PageLoadStateChanged {
+                            finished: true,
+                            uri,
+                        });
                     }
                 }
             })
@@ -205,7 +214,7 @@ impl WebViewEngine {
         #[cfg(target_os = "linux")]
         {
             apply_webkitgtk_settings(&webview);
-            let _ = (active_host_mode, proxy);
+            install_linux_accelerators(&webview, active_host_mode, proxy);
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -229,8 +238,13 @@ impl WebViewEngine {
         }
         #[cfg(target_os = "linux")]
         {
+            use gtk::prelude::WidgetExt;
             if let Some(vbox) = target_window.default_vbox() {
                 self.webview.reparent(vbox)?;
+                // Reset any previous Quick Chat child size request so resizable Main/Companion
+                // windows can shrink freely below Quick Chat's dimensions.
+                self.webview.webview().set_size_request(-1, -1);
+                vbox.show_all();
             }
             self.sync_bounds_to_window(target_window);
         }
@@ -321,6 +335,62 @@ impl WebViewEngine {
         if let Err(err) = self.webview.load_url(GEMINI_APP_URL) {
             warn!(?err, "Failed to load Gemini home URL");
         }
+    }
+
+    /// Navigates the single shared WebView to a strictly validated official Google authentication
+    /// URL (`AccountChooser`, `AddSession`, `ServiceLogin`, or `Logout`).
+    pub fn navigate_auth_url(&self, url: &str) -> Result<(), String> {
+        crate::auth::validate_auth_navigation_url(url)
+            .map_err(|code| format!("Rejected unsafe auth URL ({code:?})"))?;
+        self.resume_if_suspended();
+        self.webview
+            .load_url(url)
+            .map_err(|err| format!("Failed to load Google auth URL: {err}"))
+    }
+
+    /// Event-driven, non-invasive read-only session probe executed strictly on `PageLoadEvent::Finished`.
+    /// Never reads cookies, passwords, form inputs, or authentication tokens.
+    pub fn probe_auth_state(&self, generation: u64, proxy: EventLoopProxy<AppEvent>) {
+        let probe = r#"(function() {
+  try {
+    const host = (window.location.hostname || '').toLowerCase();
+    if (host.startsWith('accounts.google.')) {
+      const bodyText = ((document.body && document.body.innerText) || '').toLowerCase();
+      if (
+        bodyText.includes('this browser or app may not be secure') ||
+        bodyText.includes('bu tarayıcı veya uygulama güvenli olmayabilir') ||
+        bodyText.includes('disallowed_useragent')
+      ) {
+        return 'blocked';
+      }
+      return 'in_progress';
+    }
+    if (host === 'gemini.google.com') {
+      const acctEl = document.querySelector(
+        'a[aria-label*="Google Account"], button[aria-label*="Google Account"], a[aria-label*="Google Hesabı"], button[aria-label*="Google Hesabı"], a[href*="SignOutOptions"]'
+      );
+      if (acctEl) {
+        const lbl = (acctEl.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+        return lbl ? ('authenticated:' + lbl) : 'authenticated';
+      }
+      const signInEl = document.querySelector(
+        'a[href*="accounts.google.com/ServiceLogin"], a[href*="accounts.google.com/AccountChooser"], a[href*="accounts.google.com/v3/signin"]'
+      );
+      if (signInEl) {
+        return 'signed_out';
+      }
+    }
+    return 'in_progress';
+  } catch (_) {
+    return 'in_progress';
+  }
+})();"#;
+        let _ = self
+            .webview
+            .evaluate_script_with_callback(probe, move |raw| {
+                let result = crate::auth::parse_dom_probe_payload(&raw);
+                let _ = proxy.send_event(AppEvent::AuthProbeCompleted { generation, result });
+            });
     }
 
     pub fn apply_theme(&self, pref: ThemePreference, is_dark: bool) {
@@ -611,23 +681,27 @@ impl WebViewEngine {
         });
     }
 
-    /// Focuses Gemini's accessible prompt textbox when summoning Quick Chat and cleanly
-    /// collapses narrow-viewport expanded navigation drawers using standard ARIA attributes.
+    /// Focuses Gemini's accessible prompt textbox when summoning Quick Chat or Companion and
+    /// cleanly collapses narrow-viewport expanded navigation drawers using standard ARIA attributes.
     pub fn focus_composer_for_quick_chat(&self) {
         let script = r#"(function() {
-  try {
-    if (window.innerWidth < 960) {
-      const toggle = document.querySelector('button[aria-expanded="true"][aria-controls], button[aria-expanded="true"][aria-label]');
-      if (toggle) {
-        const rect = toggle.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0 && rect.left < 360 && rect.top < 96) {
-          toggle.click();
+  function collapseAndFocus() {
+    try {
+      if (window.innerWidth < 960) {
+        const toggle = document.querySelector('button[aria-expanded="true"][aria-controls], button[aria-expanded="true"][aria-label]');
+        if (toggle) {
+          const rect = toggle.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0 && rect.left < 360 && rect.top < 96) {
+            toggle.click();
+          }
         }
       }
-    }
-    const el = document.querySelector('[role="textbox"][contenteditable="true"], [contenteditable="true"]');
-    if (el) el.focus();
-  } catch (_) {}
+      const el = document.querySelector('[role="textbox"][contenteditable="true"], [contenteditable="true"]');
+      if (el) el.focus();
+    } catch (_) {}
+  }
+  collapseAndFocus();
+  setTimeout(collapseAndFocus, 120);
 })();"#;
         let _ = self.webview.evaluate_script(script);
     }
@@ -755,25 +829,100 @@ fn install_windows_accelerators(
 
 #[cfg(target_os = "linux")]
 fn apply_webkitgtk_settings(webview: &WebView) {
-    use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
+    use webkit2gtk::{
+        CookieAcceptPolicy, CookieManagerExt, HardwareAccelerationPolicy, SettingsExt, WebViewExt,
+        WebsiteDataManagerExt,
+    };
 
     let wk = webview.webview();
     if let Some(settings) = wk.settings() {
-        // Enable media streams & smooth scrolling for genuine Gemini features (e.g. voice input).
-        // Never spoof User-Agent or bypass Google's authentication policies.
+        // Enable media streams, persistent HTML5 storage, and allowlisted auth popups for genuine
+        // Gemini features. Never spoof User-Agent or bypass Google's authentication policies.
         settings.set_enable_media_stream(true);
         settings.set_enable_mediasource(true);
+        settings.set_enable_html5_local_storage(true);
+        settings.set_enable_html5_database(true);
         settings.set_javascript_can_access_clipboard(true);
+        settings.set_javascript_can_open_windows_automatically(true);
         settings.set_enable_smooth_scrolling(true);
         settings.set_enable_developer_extras(cfg!(debug_assertions));
 
         let hw_policy = if std::env::var_os("GEMINIDESK_SOFTWARE_RENDER").is_some() {
             HardwareAccelerationPolicy::Never
         } else {
-            HardwareAccelerationPolicy::OnDemand
+            HardwareAccelerationPolicy::Always
         };
         settings.set_hardware_acceleration_policy(hw_policy);
     }
+
+    // Because top-level navigation is strictly allowlisted to official Google domains in
+    // `navigation.rs`, disabling WebKit ITP and allowing Google cross-subdomain SSO cookies
+    // (`accounts.google.*`, `ogs.google.com`, `gemini.google.com`) preserves persistent sessions
+    // and the Google Account Switcher across restarts.
+    if let Some(data_manager) = wk.website_data_manager() {
+        data_manager.set_itp_enabled(false);
+        if let Some(cookie_manager) = data_manager.cookie_manager() {
+            cookie_manager.set_accept_policy(CookieAcceptPolicy::Always);
+        }
+    }
+}
+
+/// Hooks native GTK `key-press-event` on the Linux `WebKitWebView` (zero persistent JS injection):
+/// - `Esc` (in Quick Chat mode only) -> hides Quick Chat immediately
+/// - `Ctrl + Shift + E` (in Quick Chat or Companion) -> expands into Full Window
+/// - `Ctrl + Shift + T` (in Companion) -> toggles Always on Top immediately
+/// - `Ctrl + ,` -> opens GeminiDesk Settings
+#[cfg(target_os = "linux")]
+fn install_linux_accelerators(
+    webview: &WebView,
+    active_host_mode: Arc<AtomicU8>,
+    proxy: EventLoopProxy<AppEvent>,
+) {
+    use gtk::gdk::{ModifierType, keys::constants as keys};
+    use gtk::glib::Propagation;
+    use gtk::prelude::WidgetExt;
+
+    let wk = webview.webview();
+    wk.connect_key_press_event(move |_, event| {
+        let keyval = event.keyval();
+        let state = event.state();
+        let ctrl_down = state.contains(ModifierType::CONTROL_MASK);
+        let shift_down = state.contains(ModifierType::SHIFT_MASK);
+        let alt_down = state.contains(ModifierType::MOD1_MASK);
+        let host = active_host_mode.load(Ordering::Relaxed);
+
+        if keyval == keys::Escape && host == HOST_QUICK_CHAT {
+            let _ = proxy.send_event(AppEvent::HideQuickChat);
+            return Propagation::Stop;
+        }
+
+        if ctrl_down && !shift_down && !alt_down && keyval == keys::comma {
+            let _ = proxy.send_event(AppEvent::OpenSettings(None));
+            return Propagation::Stop;
+        }
+
+        if ctrl_down
+            && shift_down
+            && !alt_down
+            && (keyval == keys::E || keyval == keys::e)
+            && (host == HOST_QUICK_CHAT || host == HOST_COMPANION)
+        {
+            let _ = proxy.send_event(AppEvent::ShowMainWindow);
+            return Propagation::Stop;
+        }
+
+        if ctrl_down
+            && shift_down
+            && !alt_down
+            && (keyval == keys::T || keyval == keys::t)
+            && host == HOST_COMPANION
+        {
+            let _ = proxy.send_event(AppEvent::ToggleCompanionAlwaysOnTop);
+            return Propagation::Stop;
+        }
+
+        Propagation::Proceed
+    });
 }
 
 /// Strips path separators, traversal tokens, and reserved OS device names from downloads.

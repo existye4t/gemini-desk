@@ -292,6 +292,18 @@ pub fn is_geometry_on_any_monitor(
     false
 }
 
+/// Hides `window` immediately (synchronously unmapping the GTK window on Linux so it never
+/// races with presenting a newly reparented target window on Wayland).
+pub fn hide_window(window: &Window) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+        use tao::platform::unix::WindowExtUnix;
+        window.gtk_window().hide();
+    }
+    window.set_visible(false);
+}
+
 /// Brings a window reliably to the foreground and gives it OS keyboard focus.
 pub fn focus_window(window: &Window) {
     #[cfg(target_os = "windows")]

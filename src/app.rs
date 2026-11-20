@@ -14,6 +14,9 @@ use tracing::{error, info, warn};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use wry::WebContext;
 
+use crate::auth::{
+    self, AuthController, AuthDomProbeResult, AuthErrorCode, GEMINI_APP_URL, SignInFlow,
+};
 use crate::config::{
     self, AppConfig, AppPaths, AppState, CloseBehavior, PerformanceMode, ThemePreference,
     WindowGeometry, clear_safe_cache, compute_cache_size_bytes, default_clipboard_templates,
@@ -30,7 +33,7 @@ use crate::productivity::screenshot::{self, CaptureOutcome};
 use crate::productivity::selection::{self, SelectionOutcome};
 use crate::settings_window::{SettingsIpcMessage, SettingsWindow};
 use crate::tray::{
-    MENU_CAPTURE_SCREENSHOT, MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT,
+    MENU_ACCOUNT, MENU_CAPTURE_SCREENSHOT, MENU_CLIPBOARD_ACTIONS, MENU_COMPANION, MENU_NEW_CHAT,
     MENU_OPEN_GEMINI, MENU_QUICK_CHAT, MENU_QUIT, MENU_SETTINGS, TrayController,
 };
 use crate::updater::{self, UpdateStatus, UpdaterConfig, VerifiedUpdateOffer};
@@ -51,6 +54,7 @@ pub struct LaunchOptions {
     pub start_companion: bool,
     pub open_settings_tab: Option<String>,
     pub open_settings: bool,
+    pub start_sign_in: bool,
     pub open_clipboard_actions: bool,
     pub open_ask_selection: bool,
     pub open_screenshot: bool,
@@ -69,6 +73,11 @@ impl LaunchOptions {
                 opts.start_companion = true;
             } else if arg == "--settings" {
                 opts.open_settings = true;
+            } else if arg == "--account" {
+                opts.open_settings = true;
+                opts.open_settings_tab = Some("account".to_string());
+            } else if arg == "--sign-in" {
+                opts.start_sign_in = true;
             } else if let Some(tab) = arg.strip_prefix("--settings=") {
                 opts.open_settings = true;
                 opts.open_settings_tab = Some(tab.to_string());
@@ -140,6 +149,14 @@ pub enum AppEvent {
     UpdateDownloadFinished(Result<PathBuf, String>),
     TrayMenu(String),
     TrayLeftClick,
+    PageLoadStateChanged {
+        finished: bool,
+        uri: String,
+    },
+    AuthProbeCompleted {
+        generation: u64,
+        result: AuthDomProbeResult,
+    },
     DocumentTitleChanged(String),
     Quit,
 }
@@ -170,6 +187,7 @@ struct DesktopApp {
     settings_window: Option<SettingsWindow>,
     action_window: Option<ActionWindow>,
     perf_sampler: PerformanceSampler,
+    auth: AuthController,
     updater_cfg: UpdaterConfig,
     update_status: UpdateStatus,
     pending_offer: Option<VerifiedUpdateOffer>,
@@ -203,11 +221,11 @@ impl DesktopApp {
     fn show_main_window(&mut self) {
         let t0 = Instant::now();
         if self.quick_chat_window.is_visible() {
-            self.quick_chat_window.set_visible(false);
+            platform::hide_window(&self.quick_chat_window);
         }
         if self.companion_window.is_visible() {
             self.capture_companion_geometry();
-            self.companion_window.set_visible(false);
+            platform::hide_window(&self.companion_window);
         }
 
         if self.active_host != ActiveHost::Main {
@@ -240,11 +258,11 @@ impl DesktopApp {
 
         if self.main_window.is_visible() {
             self.capture_main_geometry();
-            self.main_window.set_visible(false);
+            platform::hide_window(&self.main_window);
         }
         if self.companion_window.is_visible() {
             self.capture_companion_geometry();
-            self.companion_window.set_visible(false);
+            platform::hide_window(&self.companion_window);
         }
 
         let work_area = platform::active_monitor_work_area(&self.main_window);
@@ -272,6 +290,12 @@ impl DesktopApp {
                     .store(HOST_QUICK_CHAT, Ordering::Relaxed);
             }
         }
+        #[cfg(target_os = "linux")]
+        platform::linux::apply_quick_chat_geometry(
+            &self.quick_chat_window,
+            self.config.quick_chat_width,
+            self.config.quick_chat_height,
+        );
 
         self.wake_engine();
         self.quick_chat_window.set_visible(true);
@@ -294,7 +318,7 @@ impl DesktopApp {
         if !self.quick_chat_window.is_visible() {
             return;
         }
-        self.quick_chat_window.set_visible(false);
+        platform::hide_window(&self.quick_chat_window);
         self.enter_background_state();
         info!("Quick Chat hidden");
     }
@@ -311,10 +335,10 @@ impl DesktopApp {
         let t0 = Instant::now();
         if self.main_window.is_visible() {
             self.capture_main_geometry();
-            self.main_window.set_visible(false);
+            platform::hide_window(&self.main_window);
         }
         if self.quick_chat_window.is_visible() {
-            self.quick_chat_window.set_visible(false);
+            platform::hide_window(&self.quick_chat_window);
         }
 
         // If no persisted companion geometry exists yet, dock neatly on the right side of the active display.
@@ -349,6 +373,7 @@ impl DesktopApp {
         self.engine.sync_bounds_to_window(&self.companion_window);
         platform::focus_window(&self.companion_window);
         self.engine.focus();
+        self.engine.focus_composer_for_quick_chat();
 
         info!(
             always_on_top = self.config.companion_always_on_top,
@@ -490,16 +515,51 @@ impl DesktopApp {
     fn push_settings_state(&mut self, toast: Option<String>) {
         if let Some(settings) = &mut self.settings_window {
             let cache_bytes = compute_cache_size_bytes(&self.paths.webview_data_dir);
+            let persistence = auth::inspect_profile_persistence(&self.paths.webview_data_dir);
             settings.push_state(
                 &self.config,
                 self.hotkeys.status(),
                 self.effective_dark,
                 self.paths.webview_data_dir.display().to_string(),
                 cache_bytes,
+                self.auth.state().clone(),
+                persistence,
                 self.update_status.clone(),
                 toast,
             );
         }
+    }
+
+    fn push_auth_state(&self) {
+        if let Some(settings) = &self.settings_window {
+            let persistence = auth::inspect_profile_persistence(&self.paths.webview_data_dir);
+            settings.push_auth_state(self.auth.state(), &persistence);
+        }
+    }
+
+    fn start_auth_flow(&mut self, flow: SignInFlow) {
+        match self.auth.begin_flow(flow) {
+            Ok((url, _gen)) => {
+                self.show_main_window();
+                if let Err(err) = self.engine.navigate_auth_url(url) {
+                    warn!(%err, "Google auth navigation failed");
+                    self.auth
+                        .record_error(AuthErrorCode::NetworkOrLoadError, err);
+                }
+                self.push_auth_state();
+            }
+            Err(code) => {
+                self.auth
+                    .record_error(code, format!("Rejected invalid auth flow ({code:?})"));
+                self.push_auth_state();
+            }
+        }
+    }
+
+    fn cancel_auth_flow(&mut self) {
+        self.auth.cancel_flow();
+        self.engine.load_new_chat();
+        self.push_auth_state();
     }
 
     fn set_update_status(&mut self, status: UpdateStatus) {
@@ -642,6 +702,16 @@ impl DesktopApp {
         }
         if new_cfg.companion_opacity != self.config.companion_opacity {
             platform::set_window_opacity(&self.companion_window, new_cfg.companion_opacity);
+        }
+        #[cfg(target_os = "linux")]
+        if new_cfg.quick_chat_width != self.config.quick_chat_width
+            || new_cfg.quick_chat_height != self.config.quick_chat_height
+        {
+            platform::linux::apply_quick_chat_geometry(
+                &self.quick_chat_window,
+                new_cfg.quick_chat_width,
+                new_cfg.quick_chat_height,
+            );
         }
 
         // 5. Performance mode live update
@@ -802,6 +872,8 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         el_builder.with_app_id(platform::linux::LINUX_APP_ID);
     }
     let event_loop = el_builder.build();
+    #[cfg(target_os = "linux")]
+    platform::linux::init_desktop_identity();
     let proxy = event_loop.create_proxy();
 
     _instance_guard.start_activation_listener(proxy.clone());
@@ -875,10 +947,13 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
             cfg.quick_chat_width as f64,
             cfg.quick_chat_height as f64,
         ))
-        .with_resizable(false)
         .with_decorations(false)
         .with_always_on_top(true)
         .with_visible(false);
+    #[cfg(not(target_os = "linux"))]
+    {
+        quick_wb = quick_wb.with_resizable(false);
+    }
     if let Some(ic) = app_icon.clone() {
         quick_wb = quick_wb.with_window_icon(Some(ic));
     }
@@ -925,6 +1000,12 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     platform::style_main_window(&main_window, effective_dark);
     platform::style_main_window(&companion_window, effective_dark);
     platform::style_quick_chat_window(&quick_chat_window, effective_dark);
+    #[cfg(target_os = "linux")]
+    platform::linux::apply_quick_chat_geometry(
+        &quick_chat_window,
+        cfg.quick_chat_width,
+        cfg.quick_chat_height,
+    );
     platform::set_window_opacity(&companion_window, cfg.companion_opacity);
 
     #[cfg(target_os = "windows")]
@@ -950,7 +1031,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     info!(
         elapsed_ms = startup_clock.elapsed().as_millis(),
-        "Startup phase: WebView2 initialized"
+        "Startup phase: WebView initialized"
     );
 
     // 5. Tray & Global Shortcuts
@@ -990,6 +1071,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
         settings_window: None,
         action_window: None,
         perf_sampler: PerformanceSampler::new(),
+        auth: AuthController::new(),
         updater_cfg,
         update_status: initial_update_status,
         pending_offer: None,
@@ -1050,6 +1132,9 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     if options.open_settings {
         let _ = proxy.send_event(AppEvent::OpenSettings(options.open_settings_tab));
+    }
+    if options.start_sign_in {
+        app.start_auth_flow(SignInFlow::AccountChooser);
     }
     if options.open_clipboard_actions {
         let _ = proxy.send_event(AppEvent::InvokeClipboardActions);
@@ -1115,6 +1200,30 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                             warn!(?err, "Failed to open profile directory");
                         }
                     }
+                    SettingsIpcMessage::StartSignIn => {
+                        app.start_auth_flow(SignInFlow::AccountChooser);
+                    }
+                    SettingsIpcMessage::SwitchAccount => {
+                        app.start_auth_flow(SignInFlow::AddAccount);
+                    }
+                    SettingsIpcMessage::SignOut => {
+                        app.start_auth_flow(SignInFlow::SignOut);
+                    }
+                    SettingsIpcMessage::CancelSignIn => {
+                        app.cancel_auth_flow();
+                    }
+                    SettingsIpcMessage::OpenGeminiInDefaultBrowser => {
+                        if let Err(err) = open::that_detached(GEMINI_APP_URL) {
+                            warn!(?err, "Failed to open Gemini in default system browser");
+                            app.push_settings_state(Some(format!(
+                                "Could not open default browser: {err}"
+                            )));
+                        } else {
+                            app.push_settings_state(Some(
+                                "Opened Gemini in your default system browser".into(),
+                            ));
+                        }
+                    }
                     SettingsIpcMessage::CheckForUpdates => {
                         app.start_update_check();
                     }
@@ -1152,12 +1261,21 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::InvokeAskSelection => {
                     let allow_fallback = app.config.ask_selection_clipboard_fallback;
                     let max_chars = app.config.clipboard_max_chars;
-                    let p = app.proxy.clone();
-                    std::thread::spawn(move || {
+                    #[cfg(target_os = "linux")]
+                    {
                         let outcome =
                             selection::capture_foreground_selection(allow_fallback, max_chars);
-                        let _ = p.send_event(AppEvent::SelectionCaptured(outcome));
-                    });
+                        let _ = app.proxy.send_event(AppEvent::SelectionCaptured(outcome));
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        let p = app.proxy.clone();
+                        std::thread::spawn(move || {
+                            let outcome =
+                                selection::capture_foreground_selection(allow_fallback, max_chars);
+                            let _ = p.send_event(AppEvent::SelectionCaptured(outcome));
+                        });
+                    }
                 }
                 AppEvent::SelectionCaptured(outcome) => {
                     let (captured_text, source, truncated) = match outcome {
@@ -1369,6 +1487,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     MENU_CLIPBOARD_ACTIONS => {
                         let _ = app.proxy.send_event(AppEvent::InvokeClipboardActions);
                     }
+                    MENU_ACCOUNT => app.open_or_focus_settings(target, Some("account".into())),
                     MENU_SETTINGS => app.open_or_focus_settings(target, None),
                     MENU_QUIT => {
                         let _ = app.proxy.send_event(AppEvent::Quit);
@@ -1384,6 +1503,19 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                         app.hide_companion();
                     } else {
                         app.show_main_window();
+                    }
+                }
+                AppEvent::PageLoadStateChanged { finished, uri } => {
+                    let should_probe = app.auth.on_page_url(&uri, finished);
+                    app.push_auth_state();
+                    if should_probe {
+                        app.engine
+                            .probe_auth_state(app.auth.flow_generation(), app.proxy.clone());
+                    }
+                }
+                AppEvent::AuthProbeCompleted { generation, result } => {
+                    if app.auth.apply_probe_result(generation, result).is_ok() {
+                        app.push_auth_state();
                     }
                 }
                 AppEvent::DocumentTitleChanged(doc_title) => {

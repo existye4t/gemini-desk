@@ -248,20 +248,37 @@ fn socket_path() -> PathBuf {
     std::env::temp_dir().join(format!("{MACOS_BUNDLE_ID}.sock"))
 }
 
-fn encode_target(target: ActivationTarget) -> &'static [u8] {
+fn encode_target(target: ActivationTarget) -> Vec<u8> {
     match target {
-        ActivationTarget::MainWindow => b"main\n",
-        ActivationTarget::QuickChat => b"quick_chat\n",
-        ActivationTarget::Companion => b"companion\n",
-        ActivationTarget::Settings => b"settings\n",
-        ActivationTarget::ClipboardActions => b"clipboard_actions\n",
-        ActivationTarget::AskSelection => b"ask_selection\n",
-        ActivationTarget::Screenshot => b"screenshot\n",
+        ActivationTarget::MainWindow => b"main\n".to_vec(),
+        ActivationTarget::QuickChat => b"quick_chat\n".to_vec(),
+        ActivationTarget::Companion => b"companion\n".to_vec(),
+        ActivationTarget::Settings => {
+            if std::env::args().skip(1).any(|a| a == "--account") {
+                b"settings:account\n".to_vec()
+            } else if let Some(tab) = std::env::args()
+                .skip(1)
+                .find_map(|a| a.strip_prefix("--settings=").map(str::to_string))
+                .filter(|s| !s.trim().is_empty())
+            {
+                format!("settings:{}\n", tab.trim()).into_bytes()
+            } else {
+                b"settings\n".to_vec()
+            }
+        }
+        ActivationTarget::ClipboardActions => b"clipboard_actions\n".to_vec(),
+        ActivationTarget::AskSelection => b"ask_selection\n".to_vec(),
+        ActivationTarget::Screenshot => b"screenshot\n".to_vec(),
     }
 }
 
 fn decode_target(line: &str) -> Option<AppEvent> {
-    match line.trim() {
+    let trimmed = line.trim();
+    if let Some(tab) = trimmed.strip_prefix("settings:") {
+        let tab_opt = (!tab.trim().is_empty()).then(|| tab.trim().to_string());
+        return Some(AppEvent::OpenSettings(tab_opt));
+    }
+    match trimmed {
         "main" => Some(AppEvent::ShowMainWindow),
         "quick_chat" => Some(AppEvent::ToggleQuickChat),
         "companion" => Some(AppEvent::ToggleCompanion),
@@ -288,7 +305,7 @@ pub fn acquire_single_instance(target: ActivationTarget) -> Option<SingleInstanc
     let path = socket_path();
     if path.exists() {
         if let Ok(mut stream) = UnixStream::connect(&path) {
-            let _ = stream.write_all(encode_target(target));
+            let _ = stream.write_all(&encode_target(target));
             let _ = stream.flush();
             return None;
         }

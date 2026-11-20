@@ -21,7 +21,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gtk::prelude::{GtkSettingsExt, GtkWindowExt, WidgetExt};
+use gtk::prelude::{
+    ContainerExt, CssProviderExt, GtkSettingsExt, GtkWindowExt, StyleContextExt, WidgetExt,
+};
 use tao::event_loop::EventLoopProxy;
 use tao::platform::unix::WindowExtUnix;
 use tao::window::Window;
@@ -122,12 +124,85 @@ fn query_kdeglobals_dark_mode() -> Option<bool> {
     None
 }
 
+/// Initializes Linux/Wayland application identity (`prgname`, default icon name, and user-level
+/// XDG hicolor icons + `.desktop` launcher when running uninstalled/portable builds) so Wayland
+/// compositors (KWin, Mutter, Hyprland) and XDG Desktop Portals associate windows and global
+/// shortcuts with `io.geminidesk.GeminiDesk` and display the GeminiDesk prism icon.
+pub fn init_desktop_identity() {
+    gtk::glib::set_prgname(Some(LINUX_APP_ID));
+    gtk::glib::set_application_name("GeminiDesk");
+    gtk::Window::set_default_icon_name(LINUX_APP_ID);
+    ensure_user_desktop_assets();
+}
+
+fn ensure_user_desktop_assets() {
+    const ICON_SVG: &[u8] = include_bytes!("../../assets/icons/geminidesk.svg");
+    const ICON_PNG_256: &[u8] = include_bytes!("../../assets/icons/geminidesk-256.png");
+
+    let Some(data_home) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    else {
+        return;
+    };
+
+    let svg_path = data_home
+        .join("icons/hicolor/scalable/apps")
+        .join(format!("{LINUX_APP_ID}.svg"));
+    if !svg_path.exists() {
+        if let Some(parent) = svg_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&svg_path, ICON_SVG);
+    }
+
+    let png_path = data_home
+        .join("icons/hicolor/256x256/apps")
+        .join(format!("{LINUX_APP_ID}.png"));
+    if !png_path.exists() {
+        if let Some(parent) = png_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&png_path, ICON_PNG_256);
+    }
+
+    let system_desktop = PathBuf::from(format!("/usr/share/applications/{LINUX_APP_ID}.desktop"));
+    let user_desktop = data_home
+        .join("applications")
+        .join(format!("{LINUX_APP_ID}.desktop"));
+    if !system_desktop.exists()
+        && !user_desktop.exists()
+        && let Ok(exe) = std::env::current_exe()
+    {
+        if let Some(parent) = user_desktop.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let desktop_entry = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Version=1.0\n\
+             Name=GeminiDesk\n\
+             GenericName=AI Assistant Desktop Client\n\
+             Comment=Lightweight native Rust desktop client for Google Gemini\n\
+             Exec=\"{}\" %U\n\
+             Icon={LINUX_APP_ID}\n\
+             Terminal=false\n\
+             Categories=Network;Utility;\n\
+             StartupNotify=true\n\
+             StartupWMClass={LINUX_APP_ID}\n",
+            exe.display()
+        );
+        let _ = fs::write(&user_desktop, desktop_entry);
+    }
+}
+
 pub fn style_main_window(window: &Window, dark: bool) {
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_application_prefer_dark_theme(dark);
     }
     let gtk_win = window.gtk_window();
     gtk_win.set_role("geminidesk-main");
+    gtk_win.set_icon_name(Some(LINUX_APP_ID));
 }
 
 pub fn style_quick_chat_window(window: &Window, dark: bool) {
@@ -137,6 +212,40 @@ pub fn style_quick_chat_window(window: &Window, dark: bool) {
     gtk_win.set_skip_taskbar_hint(true);
     gtk_win.set_skip_pager_hint(true);
     gtk_win.set_keep_above(true);
+    gtk_win.set_position(gtk::WindowPosition::CenterAlways);
+
+    // Give the borderless Quick Chat overlay card a crisp 1px monochrome frame on Wayland/X11.
+    if let Some(vbox) = window.default_vbox() {
+        let border_hex = if dark { "#29292B" } else { "#D8D8DC" };
+        let bg_hex = if dark { "#131314" } else { "#FFFFFF" };
+        let css = format!("box {{ border: 1px solid {border_hex}; background-color: {bg_hex}; }}");
+        let provider = gtk::CssProvider::new();
+        if provider.load_from_data(css.as_bytes()).is_ok() {
+            vbox.style_context()
+                .add_provider(&provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        }
+    }
+}
+
+/// Configures Quick Chat dimensions on GTK3/Wayland.
+/// In GTK3, `set_resizable(false)` forces a `GtkWindow` to expand to its child's natural size
+/// (which `WebKitWebView` sets to its last `1220x840` Main Window allocation) and ignores
+/// `gtk_window_resize(w, h)`. Keeping the borderless Quick Chat window resizable at the GTK level
+/// causes GTK3 to size it to `default_size` / `resize(w, h)` bounded by `child_min = (0, 0)`.
+pub fn apply_quick_chat_geometry(window: &Window, logical_w: u32, logical_h: u32) {
+    let w = (logical_w.clamp(520, 1400)) as i32;
+    let h = (logical_h.clamp(420, 1000)) as i32;
+    let gtk_win = window.gtk_window();
+    gtk_win.set_resizable(true);
+    if let Some(vbox) = window.default_vbox() {
+        vbox.set_size_request(-1, -1);
+        for child in vbox.children() {
+            child.set_size_request(-1, -1);
+        }
+    }
+    gtk_win.set_size_request(-1, -1);
+    gtk_win.set_default_size(w, h);
+    gtk_win.resize(w, h);
 }
 
 pub fn set_window_opacity(window: &Window, opacity_pct: u8) {
@@ -146,8 +255,28 @@ pub fn set_window_opacity(window: &Window, opacity_pct: u8) {
 
 pub fn focus_window(window: &Window) {
     let gtk_win = window.gtk_window();
+    gtk_win.set_accept_focus(true);
+    if let Some(vbox) = window.default_vbox() {
+        vbox.show_all();
+    }
+    gtk_win.show_all();
     gtk_win.deiconify();
     gtk_win.present();
+    if !window.is_always_on_top() {
+        gtk_win.set_keep_above(true);
+        let win_clone = gtk_win.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(180), move || {
+            win_clone.set_keep_above(false);
+        });
+    }
+    // Also present on the next GLib idle tick after tao's asynchronous `window_requests_rx`
+    // finishes hiding any previous window, preventing Wayland focus loss during reparenting.
+    let win_idle = gtk_win.clone();
+    gtk::glib::idle_add_local_once(move || {
+        if win_idle.is_visible() {
+            win_idle.present();
+        }
+    });
     window.set_focus();
 }
 
@@ -213,20 +342,37 @@ fn socket_path() -> PathBuf {
     }
 }
 
-fn encode_target(target: ActivationTarget) -> &'static [u8] {
+fn encode_target(target: ActivationTarget) -> Vec<u8> {
     match target {
-        ActivationTarget::MainWindow => b"main\n",
-        ActivationTarget::QuickChat => b"quick_chat\n",
-        ActivationTarget::Companion => b"companion\n",
-        ActivationTarget::Settings => b"settings\n",
-        ActivationTarget::ClipboardActions => b"clipboard_actions\n",
-        ActivationTarget::AskSelection => b"ask_selection\n",
-        ActivationTarget::Screenshot => b"screenshot\n",
+        ActivationTarget::MainWindow => b"main\n".to_vec(),
+        ActivationTarget::QuickChat => b"quick_chat\n".to_vec(),
+        ActivationTarget::Companion => b"companion\n".to_vec(),
+        ActivationTarget::Settings => {
+            if std::env::args().skip(1).any(|a| a == "--account") {
+                b"settings:account\n".to_vec()
+            } else if let Some(tab) = std::env::args()
+                .skip(1)
+                .find_map(|a| a.strip_prefix("--settings=").map(str::to_string))
+                .filter(|s| !s.trim().is_empty())
+            {
+                format!("settings:{}\n", tab.trim()).into_bytes()
+            } else {
+                b"settings\n".to_vec()
+            }
+        }
+        ActivationTarget::ClipboardActions => b"clipboard_actions\n".to_vec(),
+        ActivationTarget::AskSelection => b"ask_selection\n".to_vec(),
+        ActivationTarget::Screenshot => b"screenshot\n".to_vec(),
     }
 }
 
 fn decode_target(line: &str) -> Option<AppEvent> {
-    match line.trim() {
+    let trimmed = line.trim();
+    if let Some(tab) = trimmed.strip_prefix("settings:") {
+        let tab_opt = (!tab.trim().is_empty()).then(|| tab.trim().to_string());
+        return Some(AppEvent::OpenSettings(tab_opt));
+    }
+    match trimmed {
         "main" => Some(AppEvent::ShowMainWindow),
         "quick_chat" => Some(AppEvent::ToggleQuickChat),
         "companion" => Some(AppEvent::ToggleCompanion),
@@ -254,7 +400,7 @@ pub fn acquire_single_instance(target: ActivationTarget) -> Option<SingleInstanc
     if path.exists() {
         // Attempt to connect to an active primary instance first.
         if let Ok(mut stream) = UnixStream::connect(&path) {
-            let _ = stream.write_all(encode_target(target));
+            let _ = stream.write_all(&encode_target(target));
             let _ = stream.flush();
             return None;
         }
@@ -499,6 +645,18 @@ fn connect_and_bind_portal(
 
     let conn = zbus::blocking::Connection::session()
         .map_err(|e| format!("D-Bus session unavailable: {e}"))?;
+
+    // Register host app_id (`io.geminidesk.GeminiDesk`) with xdg-desktop-portal 1.20+
+    // so KDE Plasma / KGlobalAccel attributes shortcuts to GeminiDesk rather than the parent shell.
+    if let Ok(registry) = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.host.portal.Registry",
+    ) {
+        let empty_opts: HashMap<&str, Value<'_>> = HashMap::new();
+        let _: Result<(), _> = registry.call("Register", &(LINUX_APP_ID, empty_opts));
+    }
 
     let portal = zbus::blocking::Proxy::new(
         &conn,

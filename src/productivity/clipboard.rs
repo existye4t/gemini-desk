@@ -359,7 +359,7 @@ mod windows_impl {
 
 #[cfg(target_os = "linux")]
 mod linux_impl {
-    use std::io::Write;
+    use std::io::{Cursor, Write};
     use std::process::{Command, Stdio};
 
     use super::ClipboardText;
@@ -387,6 +387,70 @@ mod linux_impl {
         ClipboardText::Text { text, truncated }
     }
 
+    /// Queries KDE Plasma's native `org.kde.klipper` D-Bus service on demand.
+    /// Works out-of-the-box on KDE Plasma 6 Wayland without requiring `wl-clipboard` or
+    /// prior Wayland surface focus.
+    fn read_kde_klipper() -> Option<String> {
+        let conn = zbus::blocking::Connection::session().ok()?;
+        let proxy = zbus::blocking::Proxy::new(
+            &conn,
+            "org.kde.klipper",
+            "/klipper",
+            "org.kde.klipper.klipper",
+        )
+        .ok()?;
+        proxy.call("getClipboardContents", &()).ok()
+    }
+
+    fn write_kde_klipper(text: &str) -> bool {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return false;
+        };
+        let Ok(proxy) = zbus::blocking::Proxy::new(
+            &conn,
+            "org.kde.klipper",
+            "/klipper",
+            "org.kde.klipper.klipper",
+        ) else {
+            return false;
+        };
+        let res: Result<(), _> = proxy.call("setClipboardContents", &(text,));
+        res.is_ok()
+    }
+
+    fn read_gtk_selection(selection: &gtk::gdk::Atom) -> Option<Option<String>> {
+        if !gtk::glib::MainContext::default().is_owner() {
+            return None;
+        }
+        let cb = gtk::Clipboard::get(selection);
+        Some(cb.wait_for_text().map(|s| s.to_string()))
+    }
+
+    fn write_gtk_clipboard_text(text: &str) -> bool {
+        if !gtk::glib::MainContext::default().is_owner() {
+            return false;
+        }
+        let cb = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+        cb.set_text(text);
+        cb.store();
+        true
+    }
+
+    fn write_gtk_clipboard_png(png_bytes: &[u8]) -> Option<Result<(), String>> {
+        if !gtk::glib::MainContext::default().is_owner() {
+            return None;
+        }
+        match gtk::gdk_pixbuf::Pixbuf::from_read(Cursor::new(png_bytes.to_vec())) {
+            Ok(pixbuf) => {
+                let cb = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+                cb.set_image(&pixbuf);
+                cb.store();
+                Some(Ok(()))
+            }
+            Err(err) => Some(Err(format!("Failed decoding PNG for GTK clipboard: {err}"))),
+        }
+    }
+
     pub fn read_unicode_text(max_chars: usize) -> ClipboardText {
         let candidates: &[(&str, &[&str])] = if is_wayland_session() {
             &[
@@ -410,9 +474,29 @@ mod linux_impl {
         for (bin, args) in candidates {
             if let Some(res) = run_read_cmd(bin, args) {
                 any_tool = true;
-                if let Ok(raw) = res {
+                if let Ok(raw) = res
+                    && !raw.trim().is_empty()
+                {
                     return format_text(raw, max_chars);
                 }
+            }
+        }
+
+        // Native KDE Plasma Klipper D-Bus fallback (works on Wayland without wl-clipboard).
+        if let Some(klipper_text) = read_kde_klipper() {
+            any_tool = true;
+            if !klipper_text.trim().is_empty() {
+                return format_text(klipper_text, max_chars);
+            }
+        }
+
+        // Native in-process GTK3 clipboard fallback.
+        if let Some(gtk_res) = read_gtk_selection(&gtk::gdk::SELECTION_CLIPBOARD) {
+            any_tool = true;
+            if let Some(raw) = gtk_res
+                && !raw.trim().is_empty()
+            {
+                return format_text(raw, max_chars);
             }
         }
 
@@ -440,10 +524,19 @@ mod linux_impl {
         };
 
         for (bin, args) in candidates {
-            if let Some(Ok(raw)) = run_read_cmd(bin, args) {
+            if let Some(Ok(raw)) = run_read_cmd(bin, args)
+                && !raw.trim().is_empty()
+            {
                 return format_text(raw, max_chars);
             }
         }
+
+        if let Some(Some(raw)) = read_gtk_selection(&gtk::gdk::SELECTION_PRIMARY)
+            && !raw.trim().is_empty()
+        {
+            return format_text(raw, max_chars);
+        }
+
         ClipboardText::Empty
     }
 
@@ -470,6 +563,14 @@ mod linux_impl {
     }
 
     pub fn write_unicode_text(text: &str) -> Result<(), String> {
+        let mut wrote_any = false;
+        if write_gtk_clipboard_text(text) {
+            wrote_any = true;
+        }
+        if write_kde_klipper(text) {
+            wrote_any = true;
+        }
+
         let candidates: &[(&str, &[&str])] = if is_wayland_session() {
             &[
                 ("wl-copy", &[]),
@@ -489,13 +590,24 @@ mod linux_impl {
                 return res;
             }
         }
-        Err("Install `wl-clipboard` (Wayland) or `xclip` (X11) to write to the clipboard.".into())
+
+        if wrote_any {
+            Ok(())
+        } else {
+            Err(
+                "Install `wl-clipboard` (Wayland) or `xclip` (X11) to write to the clipboard."
+                    .into(),
+            )
+        }
     }
 
     pub fn write_png_image(png_bytes: &[u8]) -> Result<(), String> {
         if png_bytes.is_empty() {
             return Err("Empty PNG image buffer".into());
         }
+
+        let gtk_wrote = write_gtk_clipboard_png(png_bytes);
+
         let candidates: &[(&str, &[&str])] = if is_wayland_session() {
             &[
                 ("wl-copy", &["--type", "image/png"]),
@@ -519,6 +631,11 @@ mod linux_impl {
                 return res;
             }
         }
+
+        if let Some(res) = gtk_wrote {
+            return res;
+        }
+
         Err("Install `wl-clipboard` (Wayland) or `xclip` (X11) to copy images.".into())
     }
 }

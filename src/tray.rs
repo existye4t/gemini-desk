@@ -11,6 +11,7 @@ pub const MENU_COMPANION: &str = "companion";
 pub const MENU_NEW_CHAT: &str = "new_chat";
 pub const MENU_CAPTURE_SCREENSHOT: &str = "capture_screenshot";
 pub const MENU_CLIPBOARD_ACTIONS: &str = "clipboard_actions";
+pub const MENU_ACCOUNT: &str = "account";
 pub const MENU_SETTINGS: &str = "settings";
 pub const MENU_QUIT: &str = "quit";
 
@@ -63,6 +64,8 @@ impl TrayController {
             None,
         );
 
+        let account_item =
+            MenuItem::with_id(MENU_ACCOUNT, "Google Account & Sign-In...", true, None);
         let settings_item = MenuItem::with_id(MENU_SETTINGS, "Settings...", true, None);
         let quit_item = MenuItem::with_id(MENU_QUIT, "Quit GeminiDesk", true, None);
 
@@ -74,6 +77,7 @@ impl TrayController {
         let _ = menu.append(&screenshot_item);
         let _ = menu.append(&clipboard_item);
         let _ = menu.append(&PredefinedMenuItem::separator());
+        let _ = menu.append(&account_item);
         let _ = menu.append(&settings_item);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&quit_item);

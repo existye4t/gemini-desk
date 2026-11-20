@@ -13,6 +13,7 @@ use wry::WebViewBuilderExtUnix;
 use wry::WebViewBuilderExtWindows;
 
 use crate::app::AppEvent;
+use crate::auth::{AuthState, ProfilePersistenceStatus};
 use crate::config::AppConfig;
 use crate::hotkeys::HotkeyStatus;
 use crate::icon;
@@ -32,6 +33,11 @@ pub enum SettingsIpcMessage {
     RequestMetrics,
     ClearCache,
     OpenProfileFolder,
+    StartSignIn,
+    SwitchAccount,
+    SignOut,
+    CancelSignIn,
+    OpenGeminiInDefaultBrowser,
     CheckForUpdates,
     DownloadUpdate,
     InstallUpdate,
@@ -49,6 +55,8 @@ pub struct SettingsViewState {
     pub webview_version: String,
     pub profile_path: String,
     pub cache_size_bytes: u64,
+    pub auth_state: AuthState,
+    pub profile_persistence: ProfilePersistenceStatus,
     pub update_status: UpdateStatus,
     pub initial_tab: Option<String>,
     pub toast: Option<String>,
@@ -182,6 +190,8 @@ impl SettingsWindow {
         effective_dark: bool,
         profile_path: String,
         cache_size_bytes: u64,
+        auth_state: AuthState,
+        profile_persistence: ProfilePersistenceStatus,
         update_status: UpdateStatus,
         toast: Option<String>,
     ) {
@@ -195,6 +205,8 @@ impl SettingsWindow {
             webview_version: runtime_version_string(),
             profile_path,
             cache_size_bytes,
+            auth_state,
+            profile_persistence,
             update_status,
             initial_tab,
             toast,
@@ -203,6 +215,28 @@ impl SettingsWindow {
             let script = format!("window.__geminidesk_apply_state({json});");
             if let Err(err) = self.webview.evaluate_script(&script) {
                 warn!(?err, "Failed to push state to Settings UI");
+            }
+        }
+    }
+
+    pub fn push_auth_state(
+        &self,
+        auth_state: &AuthState,
+        profile_persistence: &ProfilePersistenceStatus,
+    ) {
+        #[derive(Serialize)]
+        struct AuthUpdatePayload<'a> {
+            auth_state: &'a AuthState,
+            profile_persistence: &'a ProfilePersistenceStatus,
+        }
+        let payload = AuthUpdatePayload {
+            auth_state,
+            profile_persistence,
+        };
+        if let Ok(json) = serde_json::to_string(&payload) {
+            let script = format!("window.__geminidesk_apply_auth_state({json});");
+            if let Err(err) = self.webview.evaluate_script(&script) {
+                warn!(?err, "Failed to push auth state to Settings UI");
             }
         }
     }

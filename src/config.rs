@@ -292,6 +292,8 @@ impl AppPaths {
             let updates_dir = proj.data_local_dir().join("updates");
             let _ = fs::create_dir_all(&config_dir);
             let _ = fs::create_dir_all(&webview_data_dir);
+            harden_private_dir(&config_dir);
+            harden_private_dir(&webview_data_dir);
             Self {
                 config_dir,
                 webview_data_dir,
@@ -304,6 +306,8 @@ impl AppPaths {
             let updates_dir = base.join("updates");
             let _ = fs::create_dir_all(&config_dir);
             let _ = fs::create_dir_all(&webview_data_dir);
+            harden_private_dir(&config_dir);
+            harden_private_dir(&webview_data_dir);
             Self {
                 config_dir,
                 webview_data_dir,
@@ -320,6 +324,17 @@ impl AppPaths {
         self.config_dir.join("state.toml")
     }
 }
+
+/// Restricts local config and WebView profile directories to owner-only (`0700`) on Unix
+/// systems without modifying or deleting any existing session files inside them.
+#[cfg(unix)]
+fn harden_private_dir(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+}
+
+#[cfg(not(unix))]
+fn harden_private_dir(_path: &Path) {}
 
 fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
@@ -372,11 +387,13 @@ pub fn save_state(path: &Path, state: &AppState) -> std::io::Result<()> {
     write_atomic(path, &serialized)
 }
 
-/// Safe-to-clear transient cache directories inside WebView2's profile.
-/// Strictly excludes Cookies, Network, Local Storage, IndexedDB, and Google login state.
+/// Safe-to-clear transient cache directories inside the WebView profile (WebView2 on Windows,
+/// WebKitGTK on Linux). Strictly excludes Cookies, Network, Local Storage, IndexedDB, HSTS,
+/// and Google login state.
 pub fn webview_cache_dirs(webview_data_dir: &Path) -> Vec<PathBuf> {
     let default_profile = webview_data_dir.join("EBWebView").join("Default");
     vec![
+        // Windows WebView2 cache directories
         default_profile.join("Cache"),
         default_profile.join("Code Cache"),
         default_profile.join("GPUCache"),
@@ -384,6 +401,9 @@ pub fn webview_cache_dirs(webview_data_dir: &Path) -> Vec<PathBuf> {
         default_profile.join("DawnWebGPUCache"),
         webview_data_dir.join("EBWebView").join("GrShaderCache"),
         webview_data_dir.join("EBWebView").join("ShaderCache"),
+        // Linux WebKitGTK cache directories (`cookies` and `localstorage` remain untouched)
+        webview_data_dir.join("WebKitCache"),
+        webview_data_dir.join("CacheStorage"),
     ]
 }
 

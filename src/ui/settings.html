@@ -535,6 +535,10 @@
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>General</span>
         </button>
+        <button class="nav-item" role="tab" aria-selected="false" data-tab="account">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span>Account</span>
+        </button>
         <button class="nav-item" role="tab" aria-selected="false" data-tab="appearance">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 7.5 16.5 12 12 16.5"/></svg>
           <span>Appearance</span>
@@ -611,6 +615,59 @@
             </div>
             <label class="gd-switch"><input type="checkbox" id="minimize_to_tray" /><span class="gd-track"></span></label>
           </div>
+        </div>
+      </section>
+
+      <!-- ACCOUNT -->
+      <section class="panel" id="panel-account">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Google Account</h1>
+            <p class="panel-subtitle">Direct Google sign-in, account switching, and local session persistence.</p>
+          </div>
+          <span class="gd-badge" id="auth-status-badge">
+            <span class="gd-dot" id="auth-status-dot"></span>
+            <span id="auth-status-label">Checking…</span>
+          </span>
+        </div>
+
+        <div class="group-label">Session</div>
+        <div class="update-box">
+          <div class="update-head">
+            <div style="min-width:0;">
+              <div class="update-title" id="auth-title">Checking Google Gemini session…</div>
+              <div class="update-msg" id="auth-msg">GeminiDesk loads Google's official sign-in flow directly inside the native OS WebView.</div>
+            </div>
+            <div class="update-actions">
+              <button class="gd-btn gd-btn-sm gd-btn-primary" type="button" id="btn-auth-signin">Sign in with Google</button>
+              <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-switch" hidden>Switch Account</button>
+              <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-cancel" hidden>Cancel</button>
+              <button class="gd-btn gd-btn-sm" type="button" id="btn-auth-signout" hidden>Sign Out</button>
+            </div>
+          </div>
+          <div class="update-notes" id="auth-error-detail" hidden></div>
+        </div>
+
+        <div class="group-label" style="margin-top:16px;">Persistence &amp; Browser Fallback</div>
+        <div class="rows">
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Persistent WebView profile</div>
+              <div class="row-desc" id="auth-persist-desc">Session cookies persist locally across application restarts.</div>
+            </div>
+            <span class="gd-badge" id="auth-persist-badge">Ready</span>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Open Gemini in default browser</div>
+              <div class="row-desc">Launches gemini.google.com in your system browser. External browser sessions stay in your browser because Google does not support transferring them into an embedded WebView.</div>
+            </div>
+            <button class="gd-btn gd-btn-sm" type="button" id="btn-open-default-browser">Open Browser</button>
+          </div>
+        </div>
+
+        <div class="legal-note">
+          GeminiDesk never intercepts Google credentials, never reads cookies from Zen, Firefox, Chrome, Edge, or Safari, never spoofs browser identities, and never uses undocumented Google session APIs.
         </div>
       </section>
 
@@ -827,7 +884,7 @@
           <div class="row">
             <div class="row-text">
               <div class="row-label">Ask Gemini with Selection</div>
-              <div class="row-desc">Uses Windows UI Automation on demand; blocks password fields.</div>
+              <div class="row-desc">Uses native OS selection capture on demand; blocks password fields.</div>
             </div>
             <label class="gd-switch"><input type="checkbox" id="ask_selection_enabled" /><span class="gd-track"></span></label>
           </div>
@@ -893,7 +950,7 @@
         <div class="panel-header">
           <div>
             <h1 class="panel-title">Performance</h1>
-            <p class="panel-subtitle">WebView2 resource profile and bounded live telemetry.</p>
+            <p class="panel-subtitle">Native WebView resource profile and bounded live telemetry.</p>
           </div>
           <span class="gd-badge" id="perf-sampling-badge">
             <span class="gd-dot ok"></span>
@@ -906,7 +963,7 @@
           <div class="row">
             <div class="row-text">
               <div class="row-label">Performance mode</div>
-              <div class="row-desc" id="perf-mode-desc">Reduces WebView2 memory in tray while preserving instant wake.</div>
+              <div class="row-desc" id="perf-mode-desc">Reduces WebView memory in tray while preserving instant wake.</div>
             </div>
             <div class="gd-segmented" id="perf-seg">
               <span class="gd-seg-pill"></span>
@@ -955,7 +1012,7 @@
         <div class="role-list" id="role-list"></div>
 
         <div class="telemetry-note">
-          Private memory avoids double-counting shared OS/Edge libraries. This Settings window temporarily adds one lightweight local renderer while open and is freed immediately when closed. Telemetry sampling stops automatically when leaving this tab.
+          Private memory avoids double-counting shared OS/WebView libraries. This Settings window temporarily adds one lightweight local renderer while open and is freed immediately when closed. Telemetry sampling stops automatically when leaving this tab.
         </div>
       </section>
 
@@ -979,7 +1036,7 @@
           </div>
           <div class="row">
             <div class="row-text">
-              <div class="row-label">WebView2 profile directory</div>
+              <div class="row-label">WebView profile directory</div>
               <div class="mono-path" id="profile_path">—</div>
             </div>
             <button class="gd-btn" type="button" id="open_profile_btn">Open Folder</button>
@@ -991,7 +1048,7 @@
           <div class="row">
             <div class="row-text">
               <div class="row-label">Direct Google authentication</div>
-              <div class="row-desc">Passwords and cookies remain strictly inside WebView2. GeminiDesk has no backend and zero telemetry.</div>
+              <div class="row-desc">Passwords and cookies remain strictly inside the native OS WebView. GeminiDesk has no backend and zero telemetry.</div>
             </div>
           </div>
           <div class="row">
@@ -1079,7 +1136,7 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const TAB_ORDER = ['general', 'appearance', 'shortcuts', 'quick_chat', 'productivity', 'performance', 'privacy', 'about'];
+  const TAB_ORDER = ['general', 'account', 'appearance', 'shortcuts', 'quick_chat', 'productivity', 'performance', 'privacy', 'about'];
 
   let activeTab = 'general';
   let perfTimer = null;
@@ -1097,9 +1154,9 @@
   };
 
   const PERF_DESCRIPTIONS = {
-    efficiency: 'Lowers WebView2 memory in tray and safely suspends when idle with no active stream or audio.',
-    balanced: 'Reduces WebView2 memory in tray while keeping instant wake and active tasks uninterrupted.',
-    performance: 'Keeps WebView2 at normal memory target at all times for maximum responsiveness.',
+    efficiency: 'Lowers WebView memory in tray and safely suspends when idle with no active stream or audio.',
+    balanced: 'Reduces WebView memory in tray while keeping instant wake and active tasks uninterrupted.',
+    performance: 'Keeps WebView at normal memory target at all times for maximum responsiveness.',
   };
 
   function post(payload) {
@@ -1268,6 +1325,9 @@
 
   /* Tab Switching */
   function setTab(tab) {
+    if (!document.getElementById(`panel-${tab}`)) {
+      tab = 'general';
+    }
     stopRecording(true);
     closeAllDropdowns();
     activeTab = tab;
@@ -1466,6 +1526,12 @@
     $('cache_size').textContent = formatBytes(state.cache_size_bytes);
     $('auto_check_updates').checked = !!c.auto_check_updates;
     $('auto_download_updates').checked = !!c.auto_download_updates;
+    if (state.auth_state) {
+      window.__geminidesk_apply_auth_state({
+        auth_state: state.auth_state,
+        profile_persistence: state.profile_persistence,
+      });
+    }
     if (state.update_status) {
       window.__geminidesk_apply_update_status(state.update_status);
     }
@@ -1508,6 +1574,76 @@
       `;
       list.appendChild(row);
     });
+  };
+
+  window.__geminidesk_apply_auth_state = function(payload) {
+    const st = payload && payload.auth_state;
+    const persist = payload && payload.profile_persistence;
+    if (persist) {
+      $('auth-persist-desc').textContent = persist.engine_storage_note || '';
+      $('auth-persist-badge').textContent = persist.session_storage_present
+        ? 'Session Stored'
+        : (persist.profile_dir_exists ? 'Initialized' : 'Not Created');
+    }
+    if (!st) return;
+
+    const dot = $('auth-status-dot');
+    const label = $('auth-status-label');
+    const title = $('auth-title');
+    const msg = $('auth-msg');
+    const errDetail = $('auth-error-detail');
+    const btnSignIn = $('btn-auth-signin');
+    const btnSwitch = $('btn-auth-switch');
+    const btnCancel = $('btn-auth-cancel');
+    const btnSignOut = $('btn-auth-signout');
+
+    dot.className = 'gd-dot';
+    errDetail.hidden = true;
+    btnSignIn.hidden = true;
+    btnSwitch.hidden = true;
+    btnCancel.hidden = true;
+    btnSignOut.hidden = true;
+
+    switch (st.state) {
+      case 'checking':
+        label.textContent = 'Checking…';
+        title.textContent = 'Checking Google Gemini session…';
+        msg.textContent = 'Inspecting the active Gemini workspace state.';
+        btnSignIn.hidden = false;
+        break;
+      case 'authenticated':
+        dot.classList.add('ok');
+        label.textContent = 'Signed in';
+        title.textContent = st.account_hint || 'Signed in to Google Gemini';
+        msg.textContent = st.multi_account_index != null
+          ? `Active session in persistent WebView profile (account slot /u/${st.multi_account_index}).`
+          : 'Your Google session is active and persists locally across restarts.';
+        btnSwitch.hidden = false;
+        btnSignOut.hidden = false;
+        break;
+      case 'signed_out':
+        label.textContent = 'Signed out';
+        title.textContent = 'Not signed in to Google';
+        msg.textContent = 'Sign in through Google’s official Account Chooser inside GeminiDesk so your chats, models, and subscriptions stay synced.';
+        btnSignIn.hidden = false;
+        break;
+      case 'signing_in':
+        dot.classList.add('warn');
+        label.textContent = 'In progress';
+        title.textContent = st.stage || 'Waiting for Google sign-in…';
+        msg.textContent = 'Complete authentication in the GeminiDesk main window.';
+        btnCancel.hidden = false;
+        break;
+      case 'auth_error':
+        dot.classList.add('warn');
+        label.textContent = 'Attention needed';
+        title.textContent = 'Google sign-in could not complete';
+        msg.textContent = 'Retry inside GeminiDesk or open Gemini in your default system browser.';
+        errDetail.textContent = st.message || 'Embedded WebView authentication was interrupted.';
+        errDetail.hidden = false;
+        btnSignIn.hidden = false;
+        break;
+    }
   };
 
   window.__geminidesk_apply_update_status = function(st) {
@@ -1587,6 +1723,19 @@
   ]) {
     $(id).addEventListener('change', saveNow);
   }
+
+  $('btn-auth-signin').addEventListener('click', () => post({ type: 'start_sign_in' }));
+  $('btn-auth-switch').addEventListener('click', () => post({ type: 'switch_account' }));
+  $('btn-auth-cancel').addEventListener('click', () => post({ type: 'cancel_sign_in' }));
+  $('btn-auth-signout').addEventListener('click', () => {
+    openConfirm(
+      'Sign out of Google?',
+      'GeminiDesk will open Google’s official sign-out page in the main window and end your current Gemini session.',
+      'Sign Out',
+      () => post({ type: 'sign_out' })
+    );
+  });
+  $('btn-open-default-browser').addEventListener('click', () => post({ type: 'open_gemini_in_default_browser' }));
 
   $('btn-check-updates').addEventListener('click', () => post({ type: 'check_for_updates' }));
   $('btn-download-update').addEventListener('click', () => post({ type: 'download_update' }));
@@ -1695,9 +1844,10 @@
       } else {
         post({ type: 'close' });
       }
-    } else if (e.altKey && e.key >= '1' && e.key <= '8') {
+    } else if (e.altKey && e.key >= '1' && e.key <= '9') {
       e.preventDefault();
-      setTab(TAB_ORDER[parseInt(e.key, 10) - 1]);
+      const idx = parseInt(e.key, 10) - 1;
+      if (TAB_ORDER[idx]) setTab(TAB_ORDER[idx]);
     }
   });
 
