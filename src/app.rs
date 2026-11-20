@@ -49,6 +49,7 @@ pub struct LaunchOptions {
     pub open_settings_tab: Option<String>,
     pub open_settings: bool,
     pub open_clipboard_actions: bool,
+    pub open_ask_selection: bool,
     pub preview_theme: Option<ThemePreference>,
 }
 
@@ -69,6 +70,8 @@ impl LaunchOptions {
                 opts.open_settings_tab = Some(tab.to_string());
             } else if arg == "--clipboard-actions" {
                 opts.open_clipboard_actions = true;
+            } else if arg == "--ask-selection" {
+                opts.open_ask_selection = true;
             } else if let Some(th) = arg.strip_prefix("--preview-theme=") {
                 opts.preview_theme = match th {
                     "dark" => Some(ThemePreference::Dark),
@@ -112,6 +115,7 @@ pub enum AppEvent {
     ScreenshotCaptured(CaptureOutcome),
     InvokeClipboardActions,
     EvaluateIdleSuspend(u64),
+    SafeSuspendResult { generation: u64, safe: bool },
     HotkeyPressed(u32),
     TrayMenu(String),
     TrayLeftClick,
@@ -158,10 +162,10 @@ impl DesktopApp {
         self.background_gen.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    fn any_gemini_window_visible(&self) -> bool {
-        self.main_window.is_visible()
+    fn any_gemini_window_active(&self) -> bool {
+        (self.main_window.is_visible() && !self.main_window.is_minimized())
             || self.quick_chat_window.is_visible()
-            || self.companion_window.is_visible()
+            || (self.companion_window.is_visible() && !self.companion_window.is_minimized())
     }
 
     fn wake_engine(&self) {
@@ -373,7 +377,7 @@ impl DesktopApp {
     }
 
     fn enter_background_state(&self) {
-        if self.any_gemini_window_visible() {
+        if self.any_gemini_window_active() {
             return;
         }
 
@@ -388,26 +392,46 @@ impl DesktopApp {
             }
             PerformanceMode::Efficiency => {
                 self.engine.set_low_memory(true);
-                let generation = self.bump_background_gen();
-                let delay = Duration::from_secs(self.config.efficiency_suspend_delay_secs as u64);
-                let proxy = self.proxy.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(delay);
-                    let _ = proxy.send_event(AppEvent::EvaluateIdleSuspend(generation));
-                });
+                self.schedule_idle_suspend_check();
             }
         }
+    }
+
+    fn schedule_idle_suspend_check(&self) {
+        let generation = self.bump_background_gen();
+        let delay = Duration::from_secs(self.config.efficiency_suspend_delay_secs as u64);
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            let _ = proxy.send_event(AppEvent::EvaluateIdleSuspend(generation));
+        });
     }
 
     fn handle_evaluate_idle_suspend(&self, expected_gen: u64) {
         if self.config.performance_mode != PerformanceMode::Efficiency {
             return;
         }
-        if self.any_gemini_window_visible() {
+        if self.any_gemini_window_active() {
             return;
         }
         if self.background_gen.load(Ordering::SeqCst) == expected_gen {
+            self.engine
+                .check_safe_to_suspend(expected_gen, self.proxy.clone());
+        }
+    }
+
+    fn handle_safe_suspend_result(&self, expected_gen: u64, safe: bool) {
+        if self.config.performance_mode != PerformanceMode::Efficiency
+            || self.any_gemini_window_active()
+            || self.background_gen.load(Ordering::SeqCst) != expected_gen
+        {
+            return;
+        }
+        if safe {
             self.engine.try_suspend();
+        } else {
+            // Active Gemini work detected (streaming, navigation, or audio): re-check later.
+            self.schedule_idle_suspend_check();
         }
     }
 
@@ -540,7 +564,7 @@ impl DesktopApp {
                     self.engine.set_low_memory(false);
                 }
                 PerformanceMode::Balanced | PerformanceMode::Efficiency => {
-                    if !self.any_gemini_window_visible() {
+                    if !self.any_gemini_window_active() {
                         self.engine.set_low_memory(true);
                     }
                 }
@@ -899,6 +923,9 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
     if options.open_clipboard_actions {
         let _ = proxy.send_event(AppEvent::InvokeClipboardActions);
     }
+    if options.open_ask_selection {
+        let _ = proxy.send_event(AppEvent::InvokeAskSelection);
+    }
 
     let mut guard = Some(_instance_guard);
 
@@ -913,7 +940,7 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::ToggleCompanion => app.toggle_companion(),
                 AppEvent::ToggleCompanionAlwaysOnTop => app.toggle_companion_always_on_top(),
                 AppEvent::NewChat => {
-                    if !app.any_gemini_window_visible() {
+                    if !app.any_gemini_window_active() {
                         app.show_main_window();
                     }
                     app.engine.load_new_chat();
@@ -932,10 +959,12 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     SettingsIpcMessage::RequestMetrics => {
                         if let Some(settings) = &app.settings_window {
+                            let role_map = app.engine.process_role_map();
                             let metrics = app.perf_sampler.sample(
                                 app.engine.is_low_memory(),
                                 app.engine.is_suspended(),
                                 runtime_version_string(),
+                                &role_map,
                             );
                             settings.push_metrics(&metrics);
                         }
@@ -1105,6 +1134,9 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::EvaluateIdleSuspend(generation) => {
                     app.handle_evaluate_idle_suspend(generation);
                 }
+                AppEvent::SafeSuspendResult { generation, safe } => {
+                    app.handle_safe_suspend_result(generation, safe);
+                }
                 AppEvent::HotkeyPressed(id) => match app.hotkeys.action_for_id(id) {
                     Some(HotkeyAction::ToggleQuickChat) => app.toggle_quick_chat(),
                     Some(HotkeyAction::ShowFullWindow) => app.show_main_window(),
@@ -1185,12 +1217,21 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                             }
                         },
                         WindowEvent::Resized(_) => {
-                            if app.main_window.is_minimized()
-                                && app.config.minimize_to_tray
-                                && app.main_window.is_visible()
-                            {
-                                app.hide_main_to_tray();
+                            if app.main_window.is_minimized() {
+                                if app.config.minimize_to_tray && app.main_window.is_visible() {
+                                    app.hide_main_to_tray();
+                                } else {
+                                    // Even when minimized to the Windows taskbar, throttle WebView2
+                                    // so the hidden page does not burn ~7% idle GPU/renderer CPU.
+                                    app.enter_background_state();
+                                }
                             } else if app.main_window.is_visible() {
+                                if app.active_host == ActiveHost::Main
+                                    && (app.engine.is_low_memory() || app.engine.is_suspended())
+                                {
+                                    app.wake_engine();
+                                    app.engine.sync_bounds_to_window(&app.main_window);
+                                }
                                 app.capture_main_geometry();
                             }
                         }
@@ -1231,8 +1272,18 @@ pub fn run(options: LaunchOptions) -> Result<(), Box<dyn std::error::Error>> {
                             app.snap_companion_if_needed();
                             app.capture_companion_geometry();
                         }
-                        WindowEvent::Resized(_) if app.companion_window.is_visible() => {
-                            app.capture_companion_geometry();
+                        WindowEvent::Resized(_) => {
+                            if app.companion_window.is_minimized() {
+                                app.enter_background_state();
+                            } else if app.companion_window.is_visible() {
+                                if app.active_host == ActiveHost::Companion
+                                    && (app.engine.is_low_memory() || app.engine.is_suspended())
+                                {
+                                    app.wake_engine();
+                                    app.engine.sync_bounds_to_window(&app.companion_window);
+                                }
+                                app.capture_companion_geometry();
+                            }
                         }
                         _ => {}
                     }

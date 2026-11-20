@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Instant;
@@ -36,6 +37,7 @@ pub struct WebViewEngine {
     webview: WebView,
     low_memory: AtomicBool,
     suspended: Arc<AtomicBool>,
+    is_navigating: Arc<AtomicBool>,
 }
 
 impl WebViewEngine {
@@ -53,10 +55,12 @@ impl WebViewEngine {
         let first_nav_logged = Arc::new(AtomicBool::new(false));
         let first_started_logged = Arc::new(AtomicBool::new(false));
         let first_finished_logged = Arc::new(AtomicBool::new(false));
+        let is_navigating = Arc::new(AtomicBool::new(true));
 
         let nav_flag = Arc::clone(&first_nav_logged);
         let load_started_flag = Arc::clone(&first_started_logged);
         let load_finished_flag = Arc::clone(&first_finished_logged);
+        let load_nav_state = Arc::clone(&is_navigating);
 
         let builder = WebViewBuilder::new_with_web_context(web_context)
             .with_url(GEMINI_APP_URL)
@@ -71,6 +75,7 @@ impl WebViewEngine {
                 let safe_url = redact_url_for_log(&uri);
                 match event {
                     PageLoadEvent::Started => {
+                        load_nav_state.store(true, Ordering::Relaxed);
                         if !load_started_flag.swap(true, Ordering::Relaxed) {
                             info!(
                                 elapsed_ms = startup_clock.elapsed().as_millis(),
@@ -82,6 +87,7 @@ impl WebViewEngine {
                         }
                     }
                     PageLoadEvent::Finished => {
+                        load_nav_state.store(false, Ordering::Relaxed);
                         if !load_finished_flag.swap(true, Ordering::Relaxed) {
                             info!(
                                 elapsed_ms = startup_clock.elapsed().as_millis(),
@@ -157,7 +163,10 @@ impl WebViewEngine {
         let webview = builder.build(window)?;
 
         #[cfg(target_os = "windows")]
-        install_windows_accelerators(&webview, active_host_mode, proxy);
+        {
+            apply_lean_webview2_settings(&webview);
+            install_windows_accelerators(&webview, active_host_mode, proxy);
+        }
 
         #[cfg(not(target_os = "windows"))]
         let _ = (active_host_mode, proxy);
@@ -166,6 +175,7 @@ impl WebViewEngine {
             webview,
             low_memory: AtomicBool::new(false),
             suspended: Arc::new(AtomicBool::new(false)),
+            is_navigating,
         })
     }
 
@@ -233,13 +243,6 @@ impl WebViewEngine {
                                 )
                             };
                         }
-                        info!(
-                            inner_w = size.width,
-                            inner_h = size.height,
-                            client_w = w,
-                            client_h = h,
-                            "Synced WebView2 controller and host bounds"
-                        );
                     }
                 }
             }
@@ -285,6 +288,57 @@ impl WebViewEngine {
         self.suspended.load(Ordering::Relaxed)
     }
 
+    /// Returns an official PID -> Role map from Microsoft WebView2's `ICoreWebView2Environment8::GetProcessInfos()`.
+    /// Used exclusively on demand while Settings -> Performance is open.
+    pub fn process_role_map(&self) -> HashMap<u32, &'static str> {
+        let mut map = HashMap::new();
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                COREWEBVIEW2_PROCESS_KIND, COREWEBVIEW2_PROCESS_KIND_BROWSER,
+                COREWEBVIEW2_PROCESS_KIND_GPU, COREWEBVIEW2_PROCESS_KIND_RENDERER,
+                COREWEBVIEW2_PROCESS_KIND_SANDBOX_HELPER, COREWEBVIEW2_PROCESS_KIND_UTILITY,
+                ICoreWebView2Environment8,
+            };
+            use windows::core::Interface;
+
+            let env = self.webview.environment();
+            if let Ok(env8) = env.cast::<ICoreWebView2Environment8>()
+                && let Ok(coll) = unsafe { env8.GetProcessInfos() }
+            {
+                let mut count = 0u32;
+                if unsafe { coll.Count(&mut count) }.is_ok() {
+                    for i in 0..count {
+                        if let Ok(info) = unsafe { coll.GetValueAtIndex(i) } {
+                            let mut pid = 0i32;
+                            let mut kind = COREWEBVIEW2_PROCESS_KIND::default();
+                            if unsafe { info.ProcessId(&mut pid) }.is_ok()
+                                && unsafe { info.Kind(&mut kind) }.is_ok()
+                                && pid > 0
+                            {
+                                let label = if kind == COREWEBVIEW2_PROCESS_KIND_BROWSER {
+                                    "Browser"
+                                } else if kind == COREWEBVIEW2_PROCESS_KIND_RENDERER {
+                                    "Renderer"
+                                } else if kind == COREWEBVIEW2_PROCESS_KIND_GPU {
+                                    "GPU Process"
+                                } else if kind == COREWEBVIEW2_PROCESS_KIND_UTILITY
+                                    || kind == COREWEBVIEW2_PROCESS_KIND_SANDBOX_HELPER
+                                {
+                                    "Utility / Net"
+                                } else {
+                                    "WebView2 Aux"
+                                };
+                                map.insert(pid as u32, label);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
+    }
+
     /// Switches WebView2 between Normal and Low memory usage target levels.
     pub fn set_low_memory(&self, low: bool) {
         self.low_memory.store(low, Ordering::Relaxed);
@@ -301,8 +355,80 @@ impl WebViewEngine {
         }
     }
 
-    /// Requests conditional WebView2 renderer suspension (`ICoreWebView2_3::TrySuspend`)
-    /// when hidden in tray in Efficiency mode. Safely preserves cookies and DOM state.
+    /// Checks whether WebView2 is currently playing audio (e.g. Gemini Live / TTS readout).
+    fn is_playing_audio(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+            use windows::core::Interface;
+
+            let wv = self.webview.webview();
+            if let Ok(wv8) = wv.cast::<ICoreWebView2_8>() {
+                let mut playing = windows::core::BOOL::default();
+                if unsafe { wv8.IsDocumentPlayingAudio(&mut playing) }.is_ok() {
+                    return playing.as_bool();
+                }
+            }
+        }
+        false
+    }
+
+    /// Evaluates whether the hidden WebView is genuinely idle (no in-flight navigation,
+    /// no active audio/Gemini Live, and no active streaming stop/busy control) before
+    /// requesting `TrySuspend`. Always favors preserving active Gemini work over aggressive suspension.
+    pub fn check_safe_to_suspend(&self, generation: u64, proxy: EventLoopProxy<AppEvent>) {
+        if self.suspended.load(Ordering::Relaxed) {
+            return;
+        }
+        if self.is_navigating.load(Ordering::Relaxed) {
+            info!("Deferring Efficiency suspension: navigation in flight");
+            let _ = proxy.send_event(AppEvent::SafeSuspendResult {
+                generation,
+                safe: false,
+            });
+            return;
+        }
+        if self.is_playing_audio() {
+            info!("Deferring Efficiency suspension: audio playback active");
+            let _ = proxy.send_event(AppEvent::SafeSuspendResult {
+                generation,
+                safe: false,
+            });
+            return;
+        }
+
+        // Non-invasive standard ARIA check for active streaming / busy generation state.
+        let probe = r#"(function() {
+  try {
+    if (document.querySelector('[aria-busy="true"]')) return "busy";
+    const btns = document.querySelectorAll('button[aria-label]');
+    for (const b of btns) {
+      const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+      if (lbl.includes('stop response') || lbl.includes('stop generating') || lbl.includes('yanıtı durdur') || lbl.includes('durdur')) {
+        const r = b.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return "streaming";
+      }
+    }
+    return "idle";
+  } catch (_) {
+    return "idle";
+  }
+})();"#;
+
+        let res = self.webview.evaluate_script_with_callback(probe, move |val| {
+            let safe = val.contains("idle");
+            if !safe {
+                info!(state = %val, "Deferring Efficiency suspension: active Gemini work detected");
+            }
+            let _ = proxy.send_event(AppEvent::SafeSuspendResult { generation, safe });
+        });
+        if res.is_err() {
+            // If script probe couldn't run, prefer safety and skip suspension.
+            warn!("Could not probe Gemini activity; skipping Efficiency suspension");
+        }
+    }
+
+    /// Calls `ICoreWebView2_3::TrySuspend` after `check_safe_to_suspend` confirms idle state.
     pub fn try_suspend(&self) {
         if self.suspended.load(Ordering::Relaxed) {
             return;
@@ -352,10 +478,7 @@ impl WebViewEngine {
     }
 
     /// User-triggered, non-persistent insertion of a reviewed prompt into Gemini's standard
-    /// ARIA textbox (`[role="textbox"][contenteditable="true"]`).
-    /// - Triggered strictly after explicit user confirmation in the Review/Action sheet.
-    /// - Uses standard `execCommand('insertText')` so Angular/Quill updates state cleanly.
-    /// - NEVER auto-submits the message; user retains full control to edit and press Enter.
+    /// ARIA textbox (`[role="textbox"][contenteditable="true"]`). Never auto-submits.
     pub fn insert_prompt_into_composer(&self, prompt: &str) {
         let Ok(json_text) = serde_json::to_string(prompt) else {
             return;
@@ -387,9 +510,8 @@ impl WebViewEngine {
     }
 
     /// User-triggered, non-persistent image attachment into Gemini's standard composer using
-    /// a standard `ClipboardEvent('paste', { clipboardData })` with a `File('screenshot.png')`
-    /// (while the same screenshot is also on the Windows clipboard for manual Ctrl+V fallback).
-    /// NEVER auto-submits; user can inspect the attached preview and add text before sending.
+    /// a standard `ClipboardEvent('paste', { clipboardData })` with `screenshot.png`.
+    /// Never auto-submits; user inspects the attached thumbnail before sending.
     pub fn attach_screenshot_to_composer(&self, png_bytes: &[u8], optional_prompt: Option<&str>) {
         let b64 = encode_base64(png_bytes);
         let prompt_json = optional_prompt
@@ -430,11 +552,8 @@ impl WebViewEngine {
         });
     }
 
-    /// Focuses Gemini's accessible prompt textbox cleanly when summoning Quick Chat so the
-    /// user can start typing immediately without clicking first.
-    /// Also checks if a compact responsive navigation drawer overlay is covering the viewport
-    /// using standard ARIA (`[role="navigation"]` / `aria-expanded`) without relying on
-    /// obfuscated internal CSS class names.
+    /// Focuses Gemini's accessible prompt textbox when summoning Quick Chat and cleanly
+    /// collapses narrow-viewport expanded navigation drawers using standard ARIA attributes.
     pub fn focus_composer_for_quick_chat(&self) {
         let script = r#"(function() {
   try {
@@ -469,6 +588,31 @@ fn to_wry_theme(pref: ThemePreference) -> WryTheme {
         ThemePreference::System => WryTheme::Auto,
         ThemePreference::Dark => WryTheme::Dark,
         ThemePreference::Light => WryTheme::Light,
+    }
+}
+
+/// Disables unnecessary Edge browser features (built-in autofill, Edge password manager,
+/// pinch-zoom, and back-swipe gestures) for tighter privacy and lower host overhead while
+/// leaving Google authentication, cookies, media, and Gemini functionality 100% intact.
+#[cfg(target_os = "windows")]
+fn apply_lean_webview2_settings(webview: &WebView) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Settings4, ICoreWebView2Settings5, ICoreWebView2Settings6,
+    };
+    use windows::core::Interface;
+
+    let wv = webview.webview();
+    if let Ok(settings) = unsafe { wv.Settings() } {
+        if let Ok(s4) = settings.cast::<ICoreWebView2Settings4>() {
+            let _ = unsafe { s4.SetIsGeneralAutofillEnabled(false) };
+            let _ = unsafe { s4.SetIsPasswordAutosaveEnabled(false) };
+        }
+        if let Ok(s5) = settings.cast::<ICoreWebView2Settings5>() {
+            let _ = unsafe { s5.SetIsPinchZoomEnabled(false) };
+        }
+        if let Ok(s6) = settings.cast::<ICoreWebView2Settings6>() {
+            let _ = unsafe { s6.SetIsSwipeNavigationEnabled(false) };
+        }
     }
 }
 

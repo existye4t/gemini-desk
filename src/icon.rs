@@ -95,16 +95,21 @@ fn sample_icon(u: f32, v: f32) -> (f32, f32, f32, f32) {
     (r, g, b, 1.0)
 }
 
+use std::sync::OnceLock;
+
+static WINDOW_ICON_RGBA: OnceLock<Vec<u8>> = OnceLock::new();
+static TRAY_ICON_RGBA: OnceLock<Vec<u8>> = OnceLock::new();
+
 pub fn window_icon() -> Option<tao::window::Icon> {
     let size = 64u32;
-    let rgba = render_app_icon_rgba(size);
-    tao::window::Icon::from_rgba(rgba, size, size).ok()
+    let rgba = WINDOW_ICON_RGBA.get_or_init(|| render_app_icon_rgba(size));
+    tao::window::Icon::from_rgba(rgba.clone(), size, size).ok()
 }
 
 pub fn tray_icon() -> Option<tray_icon::Icon> {
     let size = 32u32;
-    let rgba = render_app_icon_rgba(size);
-    tray_icon::Icon::from_rgba(rgba, size, size).ok()
+    let rgba = TRAY_ICON_RGBA.get_or_init(|| render_app_icon_rgba(size));
+    tray_icon::Icon::from_rgba(rgba.clone(), size, size).ok()
 }
 
 #[cfg(test)]
