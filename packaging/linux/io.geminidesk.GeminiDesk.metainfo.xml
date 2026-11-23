@@ -25,6 +25,11 @@
   </developer>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.0.2" date="2026-11-23">
+      <description>
+        <p>Fixes signed-in Gemini response hangs and stalls on Linux caused by upstream libsoup3 HTTP/2 stream multiplexing bugs on Google WebChannel streams (enabling SOUP_FORCE_HTTP1=1 by default unless overridden), and restores HTTP disk caching in Efficiency mode via CacheModel::DocumentBrowser.</p>
+      </description>
+    </release>
     <release version="1.0.1" date="2026-11-20">
       <description>
         <p>Fixes Linux WebKitGTK UI stuttering by restoring GPU-accelerated compositing via WEBKIT_DMABUF_RENDERER_FORCE_SHM=1 on WebKitGTK 2.44+ (increasing live Gemini frame rates from 13–20 FPS to 87–111 FPS while preserving multi-window reparenting), preserves decoded WebKit memory caches across transient Balanced-mode hides, and eliminates redundant GTK visibility redraws.</p>

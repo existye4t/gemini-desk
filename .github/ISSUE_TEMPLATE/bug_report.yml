@@ -27,7 +27,7 @@ body:
     id: version
     attributes:
       label: GeminiDesk & WebView Runtime Version
-      placeholder: "e.g., GeminiDesk 1.0.1, WebView2 157.0.4341.60 / WebKitGTK 2.54"
+      placeholder: "e.g., GeminiDesk 1.0.2, WebView2 157.0.4341.60 / WebKitGTK 2.54"
     validations:
       required: true
   - type: textarea

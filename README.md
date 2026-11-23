@@ -143,8 +143,8 @@ Download prebuilt packages from the [GitHub Releases](https://github.com/existye
 
 ### Windows 11 (x64)
 
-- **Recommended:** Download and run `GeminiDesk-1.0.1-Windows-x64-Setup.exe` (per-user install to `%LOCALAPPDATA%\Programs\GeminiDesk`, no administrator elevation required; upgrades preserve settings and Google sign-in).
-- **Portable:** Extract `GeminiDesk-1.0.1-Windows-x64-Portable.zip` and run `gemini-desk.exe`.
+- **Recommended:** Download and run `GeminiDesk-1.0.2-Windows-x64-Setup.exe` (per-user install to `%LOCALAPPDATA%\Programs\GeminiDesk`, no administrator elevation required; upgrades preserve settings and Google sign-in).
+- **Portable:** Extract `GeminiDesk-1.0.2-Windows-x64-Portable.zip` and run `gemini-desk.exe`.
 
 ### Linux — Arch Linux / CachyOS (Fish shell)
 
@@ -160,25 +160,25 @@ makepkg -si
 ### Linux — Debian / Ubuntu
 
 ```bash
-sudo apt install ./GeminiDesk-1.0.1-Linux-x86_64.deb
+sudo apt install ./GeminiDesk-1.0.2-Linux-x86_64.deb
 ```
 
 ### Linux — Fedora / RPM-based
 
 ```bash
-sudo dnf install ./GeminiDesk-1.0.1-Linux-x86_64.rpm
+sudo dnf install ./GeminiDesk-1.0.2-Linux-x86_64.rpm
 ```
 
 ### Linux — AppImage & Portable Tarball
 
 ```bash
-chmod +x GeminiDesk-1.0.1-Linux-x86_64.AppImage
-./GeminiDesk-1.0.1-Linux-x86_64.AppImage
+chmod +x GeminiDesk-1.0.2-Linux-x86_64.AppImage
+./GeminiDesk-1.0.2-Linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon & Intel — Experimental / Unsigned)
 
-Download `GeminiDesk-1.0.1-macOS-AppleSilicon.dmg` (M1–M4) or `GeminiDesk-1.0.1-macOS-Intel.dmg` (x86_64) and drag **GeminiDesk** to `/Applications`.
+Download `GeminiDesk-1.0.2-macOS-AppleSilicon.dmg` (M1–M4) or `GeminiDesk-1.0.2-macOS-Intel.dmg` (x86_64) and drag **GeminiDesk** to `/Applications`.
 
 > Because macOS releases are currently **unsigned and unnotarized**, Gatekeeper will display a warning on first launch and macOS runtime behavior has not yet been verified on physical Mac hardware.
 

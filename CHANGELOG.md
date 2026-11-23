@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Sema
 
 ---
 
+## [1.0.2] — 2026-11-23 (Linux Signed-In Streaming Hang & Disk Cache Fix)
+
+### Fixed
+- **Signed-In Gemini Streaming Hangs on Linux (`src/main.rs`, `src/webview.rs`):**
+  - Diagnosed a real upstream `libsoup3` (3.6.x–3.8.x) HTTP/2 stream multiplexing/flow-control hang affecting Google Gemini's signed-in `geminiweb-pa.clients6.google.com/v1/processSession` WebChannel streams: in controlled testing on CachyOS Linux (`libsoup3 3.8.1`), **5 of 8 signed-in prompts (62.5%) hung indefinitely at 366 bytes** under HTTP/2, whereas **`SOUP_FORCE_HTTP1=1` succeeded on 6 of 6 prompts (100%)** with zero hangs and faster warm stream ack (`254–272 ms` vs `398–443 ms`).
+  - GeminiDesk now sets `SOUP_FORCE_HTTP1=1` automatically on Linux at startup unless the user explicitly overrides `SOUP_FORCE_HTTP1` in their environment, and logs the active networking/rendering configuration at startup.
+- **Efficiency Mode HTTP Disk Cache (`src/webview.rs`):**
+  - Switched Linux Efficiency mode from `CacheModel::DocumentViewer` (which completely disables WebKitGTK's HTTP disk cache) to **`CacheModel::DocumentBrowser`**, preserving HTTP disk caching for Gemini's lazy-loaded JS bundles, fonts, and UI assets while keeping in-memory cache usage lean.
+
+### Tests
+- Added unit test `linux_soup_http_forces_http1_unless_user_overridden` covering default `SOUP_FORCE_HTTP1=1` selection and explicit user override preservation (**50 unit tests passing**).
+
+---
+
 ## [1.0.1] — 2026-11-20 (Linux UI Smoothness & WebKitGTK Acceleration Fix)
 
 ### Fixed

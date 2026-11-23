@@ -9,7 +9,7 @@
 #   that unsigned builds are NOT Gatekeeper-ready for public distribution.
 set -euo pipefail
 
-VERSION="${1:-1.0.1}"
+VERSION="${1:-1.0.2}"
 ARCH="${2:-aarch64}"
 BIN_PATH="${3:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
