@@ -610,8 +610,11 @@ impl WebViewEngine {
         {
             use webkit2gtk::{CacheModel, WebContextExt, WebViewExt};
             if let Some(ctx) = self.webview.webview().context() {
+                // Never use `DocumentViewer` for Gemini: it disables WebKitGTK's HTTP disk cache
+                // entirely, forcing repeated JS bundle / asset re-downloads in Efficiency mode.
+                // `DocumentBrowser` preserves the HTTP disk cache while keeping memory cache lean.
                 let model = match mode {
-                    PerformanceMode::Efficiency => CacheModel::DocumentViewer,
+                    PerformanceMode::Efficiency => CacheModel::DocumentBrowser,
                     PerformanceMode::Balanced | PerformanceMode::Performance => {
                         CacheModel::WebBrowser
                     }
@@ -1089,8 +1092,11 @@ fn apply_webkitgtk_settings(
     }
 
     if let Some(ctx) = wk.context() {
+        // Keep HTTP disk cache enabled in every mode (`DocumentBrowser` for Efficiency,
+        // `WebBrowser` for Balanced/Performance) so Gemini's lazy-loaded JS chunks and assets
+        // never suffer uncached network stalls.
         let model = match perf_mode {
-            PerformanceMode::Efficiency => CacheModel::DocumentViewer,
+            PerformanceMode::Efficiency => CacheModel::DocumentBrowser,
             PerformanceMode::Balanced | PerformanceMode::Performance => CacheModel::WebBrowser,
         };
         ctx.set_cache_model(model);
@@ -1099,13 +1105,15 @@ fn apply_webkitgtk_settings(
     let webkit_ver = wry::webview_version().unwrap_or_else(|_| "unknown".to_string());
     let dmabuf_disabled = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").ok();
     let dmabuf_force_shm = std::env::var("WEBKIT_DMABUF_RENDERER_FORCE_SHM").ok();
+    let soup_force_http1 = std::env::var("SOUP_FORCE_HTTP1").ok();
     info!(
         %webkit_ver,
         ?hw_policy,
         ?perf_mode,
         ?dmabuf_disabled,
         ?dmabuf_force_shm,
-        "Configured WebKitGTK rendering pipeline"
+        ?soup_force_http1,
+        "Configured WebKitGTK rendering and networking pipeline"
     );
 
     // Surface network/TLS/load failures during Google authentication flows so users see

@@ -71,6 +71,21 @@ fn webkit_supports_force_shm(version: Option<&str>) -> bool {
     (major, minor) >= (2, 44)
 }
 
+/// Works around upstream `libsoup3` (3.6.x–3.8.x) HTTP/2 stream multiplexing/flow-control hangs
+/// on Google Gemini's long-lived `geminiweb-pa.clients6.google.com/v1/processSession` WebChannel
+/// streams when signed in (observed hanging indefinitely at 366 bytes on ~62% of signed-in prompts
+/// under HTTP/2, vs 100% reliable streaming under HTTP/1.1).
+///
+/// Respects any explicit `SOUP_FORCE_HTTP1` value set by the user (e.g. `SOUP_FORCE_HTTP1=0`).
+#[cfg(any(target_os = "linux", test))]
+fn select_linux_soup_http_env(has_soup_force_http1: bool) -> Option<(&'static str, &'static str)> {
+    if has_soup_force_http1 {
+        None
+    } else {
+        Some(("SOUP_FORCE_HTTP1", "1"))
+    }
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -84,6 +99,15 @@ fn main() {
         if let Some((key, val)) = env_choice {
             // SAFETY: Called on the main thread at process entry before any worker threads,
             // GTK, or WebKitGTK subprocesses exist.
+            unsafe {
+                std::env::set_var(key, val);
+            }
+        }
+        if let Some((key, val)) =
+            select_linux_soup_http_env(std::env::var_os("SOUP_FORCE_HTTP1").is_some())
+        {
+            // SAFETY: Called on the main thread at process entry before any worker threads,
+            // GTK, libsoup, or WebKitNetworkProcess subprocesses exist.
             unsafe {
                 std::env::set_var(key, val);
             }
@@ -150,5 +174,14 @@ mod tests {
             select_linux_webkit_renderer_env(Some("2.54.3"), false, true, false),
             None
         );
+    }
+
+    #[test]
+    fn linux_soup_http_forces_http1_unless_user_overridden() {
+        assert_eq!(
+            select_linux_soup_http_env(false),
+            Some(("SOUP_FORCE_HTTP1", "1"))
+        );
+        assert_eq!(select_linux_soup_http_env(true), None);
     }
 }
